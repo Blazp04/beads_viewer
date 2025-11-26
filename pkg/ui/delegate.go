@@ -10,18 +10,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Tier represents the width tier of the display
-type Tier int
-
-const (
-	TierCompact Tier = iota
-	TierNormal
-	TierWide
-	TierUltraWide
-)
-
+// IssueDelegate renders issue items in the list
 type IssueDelegate struct {
-	Tier  Tier
 	Theme Theme
 }
 
@@ -42,112 +32,138 @@ func (d IssueDelegate) Render(w io.Writer, m list.Model, index int, listItem lis
 	if !ok {
 		return
 	}
-	
+
 	t := d.Theme
-	
-	// Styles
-	var baseStyle lipgloss.Style
-	if index == m.Index() {
-		baseStyle = t.Selected
-	} else {
-		baseStyle = t.Base.Copy().PaddingLeft(1).PaddingRight(1).
-			Border(lipgloss.HiddenBorder(), false, false, false, true)
+	width := m.Width()
+	if width <= 0 {
+		width = 80
 	}
+
+	isSelected := index == m.Index()
+
+	// Column definitions - we'll use the FULL width intelligently
+	// Layout: [sel] [type] [prio] [status] [ID] [title...] [labels] [assignee] [age] [comments]
+
+	// Get all the data
+	icon, iconColor := t.GetTypeIcon(string(i.Issue.IssueType))
+	prioIcon := GetPriorityIcon(i.Issue.Priority)
+	statusStr := strings.ToUpper(string(i.Issue.Status))
+	idStr := i.Issue.ID
+	title := i.Issue.Title
+	ageStr := FormatTimeRel(i.Issue.CreatedAt)
+	commentCount := len(i.Issue.Comments)
+
+	// Calculate widths for right-side columns (fixed)
+	// These go on the right: [age 8] [comments 4] [assignee 12] [labels ~20]
+	rightWidth := 0
+	var rightParts []string
+
+	// Always show age
+	rightParts = append(rightParts, fmt.Sprintf("%8s", ageStr))
+	rightWidth += 9
+
+	// Comments
+	if commentCount > 0 {
+		rightParts = append(rightParts, fmt.Sprintf("💬%-2d", commentCount))
+	} else {
+		rightParts = append(rightParts, "    ")
+	}
+	rightWidth += 5
+
+	// Assignee (if present and we have room)
+	if width > 100 && i.Issue.Assignee != "" {
+		assignee := truncateRunesHelper(i.Issue.Assignee, 12, "…")
+		rightParts = append(rightParts, fmt.Sprintf("@%-12s", assignee))
+		rightWidth += 14
+	}
+
+	// Labels (if present and we have room)
+	if width > 140 && len(i.Issue.Labels) > 0 {
+		labelStr := truncateRunesHelper(strings.Join(i.Issue.Labels, ","), 25, "…")
+		rightParts = append(rightParts, fmt.Sprintf("[%-25s]", labelStr))
+		rightWidth += 28
+	}
+
+	// Left side fixed columns
+	// [selector 2] [icon 2] [prio 2] [status 12] [id dynamic] [space]
+	leftFixedWidth := 2 + 3 + 3 + 12 + 1
+
+	// ID width - use actual rune length, but cap reasonably
+	idRunes := []rune(idStr)
+	idWidth := len(idRunes)
+	if idWidth > 35 {
+		idWidth = 35
+		idStr = truncateRunesHelper(idStr, 35, "…")
+	}
+	leftFixedWidth += idWidth + 1
+
+	// Title gets everything in between
+	titleWidth := width - leftFixedWidth - rightWidth - 2
+	if titleWidth < 15 {
+		titleWidth = 15
+	}
+
+	// Truncate title if needed
+	titleRunes := []rune(title)
+	if len(titleRunes) > titleWidth {
+		title = string(titleRunes[:titleWidth-1]) + "…"
+	} else {
+		// Pad title to fill space
+		title = title + strings.Repeat(" ", titleWidth-len(titleRunes))
+	}
+
+	// Build left side
+	var leftSide strings.Builder
+	if isSelected {
+		leftSide.WriteString("▸ ")
+	} else {
+		leftSide.WriteString("  ")
+	}
+
+	// Render icon with color
+	leftSide.WriteString(t.Renderer.NewStyle().Foreground(iconColor).Render(icon))
+	leftSide.WriteString(" ")
+
+	// Priority
+	leftSide.WriteString(prioIcon)
+	leftSide.WriteString(" ")
+
+	// Status with color
+	statusColor := t.GetStatusColor(string(i.Issue.Status))
+	leftSide.WriteString(t.Renderer.NewStyle().Width(11).Foreground(statusColor).Bold(true).Render(statusStr))
+	leftSide.WriteString(" ")
 
 	// ID
-	id := t.Renderer.NewStyle().Width(8).Foreground(t.Secondary).Bold(true).Render(i.Issue.ID)
-	
-	// Type
-	icon, color := t.GetTypeIcon(string(i.Issue.IssueType))
-	typeIcon := t.Renderer.NewStyle().Width(2).Align(lipgloss.Center).Foreground(color).Render(icon)
-	
-	// Priority
-	prio := t.Renderer.NewStyle().Width(3).Align(lipgloss.Center).Render(GetPriorityIcon(i.Issue.Priority))
-	
-	// Status
-	statusColor := t.GetStatusColor(string(i.Issue.Status))
-	status := t.Renderer.NewStyle().Width(12).Align(lipgloss.Center).Bold(true).Foreground(statusColor).Render(strings.ToUpper(string(i.Issue.Status)))
-
-	// Optional Columns
-	age := ""
-	comments := ""
-	updated := ""
-	assignee := ""
-	
-	extraWidth := 0
-
-	// Assignee
-	if d.Tier >= TierNormal {
-		s := t.Renderer.NewStyle().Width(12).Foreground(t.Secondary).Align(lipgloss.Right)
-		if i.Issue.Assignee != "" {
-			assignee = s.Render("@" + i.Issue.Assignee)
-		} else {
-			assignee = s.Render("")
-		}
-		extraWidth += 12
-	}
-
-	// Age & Comments
-	if d.Tier >= TierWide {
-		ageStr := FormatTimeRel(i.Issue.CreatedAt)
-		age = t.Renderer.NewStyle().Width(8).Foreground(t.Secondary).Align(lipgloss.Right).Render(ageStr)
-		
-		commentCount := len(i.Issue.Comments)
-		s := t.Renderer.NewStyle().Width(4).Foreground(t.Subtext).Align(lipgloss.Right)
-		if commentCount > 0 {
-			comments = s.Render(fmt.Sprintf("💬%d", commentCount))
-		} else {
-			comments = s.Render("")
-		}
-		extraWidth += 12
-	}
-
-	// Updated
-	if d.Tier >= TierUltraWide {
-		updatedStr := FormatTimeRel(i.Issue.UpdatedAt)
-		updated = t.Renderer.NewStyle().Width(10).Foreground(t.Secondary).Align(lipgloss.Right).Render(updatedStr)
-		
-		normImpact := i.Impact / 10.0
-		if normImpact > 1.0 { normImpact = 1.0 }
-		
-		impactStr := RenderSparkline(normImpact, 4)
-		impactStyle := t.Renderer.NewStyle().Foreground(GetHeatmapColor(normImpact)) // TODO: update GetHeatmapColor to use Theme?
-		// For now keep global helper for sparkline colors or move to Theme.
-		// Actually `GetHeatmapColor` uses globals `GradientHigh` etc.
-		// I should update `visuals.go` to use Theme too?
-		// Let's leave visuals global for now or fix later.
-		
-		impactRender := impactStyle.Render(impactStr)
-		if i.Impact > 0 {
-			impactRender = fmt.Sprintf("%s %.0f", impactRender, i.Impact)
-		}
-		
-		updated = lipgloss.JoinHorizontal(lipgloss.Left, updated, t.Renderer.NewStyle().Width(8).Align(lipgloss.Right).Render(impactRender))
-		extraWidth += 18
-	}
+	leftSide.WriteString(t.Renderer.NewStyle().Foreground(t.Secondary).Bold(true).Render(idStr))
+	leftSide.WriteString(" ")
 
 	// Title
-	gaps := 4 
-	if d.Tier >= TierNormal { gaps += 1 }
-	if d.Tier >= TierWide { gaps += 2 }
-	if d.Tier >= TierUltraWide { gaps += 1 }
-
-	fixedWidth := 8 + 2 + 3 + 12 + extraWidth + gaps
-	availableWidth := m.Width() - fixedWidth - 4
-	if availableWidth < 10 { availableWidth = 10 }
-
-	titleStyle := t.Renderer.NewStyle().Foreground(t.Base.GetForeground()).Width(availableWidth).MaxWidth(availableWidth)
-	if index == m.Index() {
-		titleStyle = titleStyle.Foreground(t.Primary).Bold(true)
+	if isSelected {
+		leftSide.WriteString(t.Renderer.NewStyle().Foreground(t.Primary).Bold(true).Render(title))
+	} else {
+		leftSide.WriteString(title)
 	}
-	title := titleStyle.Render(i.Issue.Title)
 
-	// Compose
-	parts := []string{id, typeIcon, prio, status, title}
-	if d.Tier >= TierWide { parts = append(parts, comments, age) }
-	if d.Tier >= TierNormal { parts = append(parts, assignee) }
-	if d.Tier >= TierUltraWide { parts = append(parts, updated) }
+	// Right side
+	rightSide := strings.Join(rightParts, " ")
 
-	row := lipgloss.JoinHorizontal(lipgloss.Left, parts...)
-	fmt.Fprint(w, baseStyle.Render(row))
+	// Combine: left + padding + right
+	leftLen := lipgloss.Width(leftSide.String())
+	rightLen := lipgloss.Width(rightSide)
+	padding := width - leftLen - rightLen - 1
+	if padding < 1 {
+		padding = 1
+	}
+
+	row := leftSide.String() + strings.Repeat(" ", padding) + t.Renderer.NewStyle().Foreground(t.Secondary).Render(rightSide)
+
+	// Apply row background for selection
+	if isSelected {
+		row = t.Renderer.NewStyle().
+			Background(t.Highlight).
+			Width(width - 1).
+			Render(row)
+	}
+
+	fmt.Fprint(w, row)
 }
