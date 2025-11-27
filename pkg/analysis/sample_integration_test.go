@@ -86,3 +86,44 @@ func TestSnapshotDiff_OnSampleFixture(t *testing.T) {
 		t.Fatalf("expected one modified issue (title), got %d: %+v", len(diff.ModifiedIssues), diff.ModifiedIssues)
 	}
 }
+
+func TestGraphMetrics_OnSampleFixture(t *testing.T) {
+	issues := loadSampleIssues(t)
+	an := NewAnalyzer(issues)
+	stats := an.Analyze()
+
+	// Known dependency: bd-4h3 depends on bd-ge7; ensure InDegree/OutDegree reflect it
+	if stats.InDegree["bd-ge7"] == 0 {
+		t.Fatalf("expected bd-ge7 to have dependents (in-degree > 0)")
+	}
+	if stats.OutDegree["bd-4h3"] == 0 {
+		t.Fatalf("expected bd-4h3 to have out-degree (depends on bd-ge7)")
+	}
+
+	// PageRank map should contain all issue IDs
+	if len(stats.PageRank) != len(issues) {
+		t.Fatalf("pagerank entries (%d) != issue count (%d)", len(stats.PageRank), len(issues))
+	}
+}
+
+func TestActionableTracksContainRealIDs(t *testing.T) {
+	issues := loadSampleIssues(t)
+	an := NewAnalyzer(issues)
+	plan := an.GetExecutionPlan()
+
+	// bd-9e23 (open chore) is actionable in the reference set; ensure it appears
+	found := false
+	for _, tr := range plan.Tracks {
+		for _, it := range tr.Items {
+			if it.ID == "bd-9e23" {
+				found = true
+				if it.Status != "open" {
+					t.Fatalf("expected bd-9e23 status open in plan, got %s", it.Status)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected actionable plan to include bd-9e23")
+	}
+}
