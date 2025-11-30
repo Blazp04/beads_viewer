@@ -98,7 +98,10 @@ func ParseRelativeTime(s string, now time.Time) (time.Time, error) {
 	}
 
 	for _, format := range formats {
-		if t, err := time.Parse(format, s); err == nil {
+		// Use ParseInLocation to respect the reference time's location (e.g., Local)
+		// This ensures date-only strings ("2024-01-01") are interpreted as midnight
+		// in the user's timezone, not UTC.
+		if t, err := time.ParseInLocation(format, s, now.Location()); err == nil {
 			return t, nil
 		}
 	}
@@ -115,134 +118,3 @@ func (e *TimeParseError) Error() string {
 	return "invalid time format: " + e.Input + " (expected relative like '14d', '2w', '1m' or ISO date)"
 }
 
-// DefaultRecipe returns a sensible default recipe
-func DefaultRecipe() Recipe {
-	return Recipe{
-		Name:        "default",
-		Description: "Default view showing all open issues sorted by priority",
-		Filters: FilterConfig{
-			Status: []string{"open", "in_progress", "blocked"},
-		},
-		Sort: SortConfig{
-			Field:     "priority",
-			Direction: "asc",
-		},
-		View: ViewConfig{
-			Columns:   []string{"id", "title", "status", "priority"},
-			ShowGraph: false,
-			GroupBy:   "none",
-		},
-	}
-}
-
-// ActionableRecipe returns a recipe for actionable items only
-func ActionableRecipe() Recipe {
-	actionable := true
-	return Recipe{
-		Name:        "actionable",
-		Description: "Issues ready to work on (no open blockers)",
-		Filters: FilterConfig{
-			Status:     []string{"open", "in_progress"},
-			Actionable: &actionable,
-		},
-		Sort: SortConfig{
-			Field:     "priority",
-			Direction: "asc",
-		},
-		View: ViewConfig{
-			Columns:     []string{"id", "title", "priority", "blockers"},
-			ShowMetrics: true,
-		},
-	}
-}
-
-// RecentRecipe returns a recipe for recently updated issues
-func RecentRecipe() Recipe {
-	return Recipe{
-		Name:        "recent",
-		Description: "Issues updated in the last 7 days",
-		Filters: FilterConfig{
-			UpdatedAfter: "7d",
-		},
-		Sort: SortConfig{
-			Field:     "updated",
-			Direction: "desc",
-		},
-		View: ViewConfig{
-			Columns: []string{"id", "title", "status", "updated"},
-		},
-	}
-}
-
-// BlockedRecipe returns a recipe showing blocked issues
-func BlockedRecipe() Recipe {
-	hasBlockers := true
-	return Recipe{
-		Name:        "blocked",
-		Description: "Issues waiting on dependencies",
-		Filters: FilterConfig{
-			Status:      []string{"open", "in_progress", "blocked"},
-			HasBlockers: &hasBlockers,
-		},
-		Sort: SortConfig{
-			Field:     "priority",
-			Direction: "asc",
-		},
-		View: ViewConfig{
-			Columns:   []string{"id", "title", "priority", "blockers"},
-			ShowGraph: true,
-		},
-	}
-}
-
-// HighImpactRecipe returns a recipe for high-impact issues (by PageRank)
-func HighImpactRecipe() Recipe {
-	return Recipe{
-		Name:        "high-impact",
-		Description: "Issues with highest blocking impact (PageRank)",
-		Filters: FilterConfig{
-			Status: []string{"open", "in_progress"},
-		},
-		Sort: SortConfig{
-			Field:     "pagerank",
-			Direction: "desc",
-		},
-		View: ViewConfig{
-			Columns:     []string{"id", "title", "priority", "pagerank"},
-			ShowMetrics: true,
-			MaxItems:    20,
-		},
-		Metrics: []string{"pagerank", "critical_path"},
-	}
-}
-
-// StaleRecipe returns a recipe for stale issues
-func StaleRecipe() Recipe {
-	return Recipe{
-		Name:        "stale",
-		Description: "Open issues not updated in 30+ days",
-		Filters: FilterConfig{
-			Status:        []string{"open", "in_progress"},
-			UpdatedBefore: "30d",
-		},
-		Sort: SortConfig{
-			Field:     "updated",
-			Direction: "asc",
-		},
-		View: ViewConfig{
-			Columns: []string{"id", "title", "status", "updated"},
-		},
-	}
-}
-
-// BuiltinRecipes returns all built-in recipes
-func BuiltinRecipes() []Recipe {
-	return []Recipe{
-		DefaultRecipe(),
-		ActionableRecipe(),
-		RecentRecipe(),
-		BlockedRecipe(),
-		HighImpactRecipe(),
-		StaleRecipe(),
-	}
-}

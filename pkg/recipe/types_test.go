@@ -71,15 +71,20 @@ func TestParseRelativeTimeISODate(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	expected := time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)
+	// Should be in same location as 'now'
+	expected := time.Date(2024, 6, 15, 0, 0, 0, 0, now.Location())
 	if !result.Equal(expected) {
 		t.Errorf("Expected %v, got %v", expected, result)
+	}
+	if result.Location() != now.Location() {
+		t.Errorf("Expected location %v, got %v", now.Location(), result.Location())
 	}
 }
 
 func TestParseRelativeTimeRFC3339(t *testing.T) {
 	now := time.Now()
 
+	// Z implies UTC
 	result, err := recipe.ParseRelativeTime("2024-06-15T10:30:00Z", now)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -131,107 +136,14 @@ func TestParseRelativeTimeCaseInsensitive(t *testing.T) {
 	}
 }
 
-func TestDefaultRecipe(t *testing.T) {
-	r := recipe.DefaultRecipe()
-
-	if r.Name != "default" {
-		t.Errorf("Expected name 'default', got %s", r.Name)
-	}
-	if len(r.Filters.Status) != 3 {
-		t.Errorf("Expected 3 status filters, got %d", len(r.Filters.Status))
-	}
-	if r.Sort.Field != "priority" {
-		t.Errorf("Expected sort by priority, got %s", r.Sort.Field)
-	}
-}
-
-func TestActionableRecipe(t *testing.T) {
-	r := recipe.ActionableRecipe()
-
-	if r.Name != "actionable" {
-		t.Errorf("Expected name 'actionable', got %s", r.Name)
-	}
-	if r.Filters.Actionable == nil || !*r.Filters.Actionable {
-		t.Error("Expected Actionable filter to be true")
-	}
-}
-
-func TestRecentRecipe(t *testing.T) {
-	r := recipe.RecentRecipe()
-
-	if r.Name != "recent" {
-		t.Errorf("Expected name 'recent', got %s", r.Name)
-	}
-	if r.Filters.UpdatedAfter != "7d" {
-		t.Errorf("Expected UpdatedAfter '7d', got %s", r.Filters.UpdatedAfter)
-	}
-	if r.Sort.Direction != "desc" {
-		t.Errorf("Expected desc sort direction, got %s", r.Sort.Direction)
-	}
-}
-
-func TestBlockedRecipe(t *testing.T) {
-	r := recipe.BlockedRecipe()
-
-	if r.Name != "blocked" {
-		t.Errorf("Expected name 'blocked', got %s", r.Name)
-	}
-	if r.Filters.HasBlockers == nil || !*r.Filters.HasBlockers {
-		t.Error("Expected HasBlockers filter to be true")
-	}
-	if !r.View.ShowGraph {
-		t.Error("Expected ShowGraph to be true")
-	}
-}
-
-func TestHighImpactRecipe(t *testing.T) {
-	r := recipe.HighImpactRecipe()
-
-	if r.Name != "high-impact" {
-		t.Errorf("Expected name 'high-impact', got %s", r.Name)
-	}
-	if r.Sort.Field != "pagerank" {
-		t.Errorf("Expected sort by pagerank, got %s", r.Sort.Field)
-	}
-	if r.View.MaxItems != 20 {
-		t.Errorf("Expected MaxItems 20, got %d", r.View.MaxItems)
-	}
-}
-
-func TestStaleRecipe(t *testing.T) {
-	r := recipe.StaleRecipe()
-
-	if r.Name != "stale" {
-		t.Errorf("Expected name 'stale', got %s", r.Name)
-	}
-	if r.Filters.UpdatedBefore != "30d" {
-		t.Errorf("Expected UpdatedBefore '30d', got %s", r.Filters.UpdatedBefore)
-	}
-}
-
-func TestBuiltinRecipes(t *testing.T) {
-	recipes := recipe.BuiltinRecipes()
-
-	// Note: This tests the programmatic builtins, not the YAML embedded ones
-	if len(recipes) < 6 {
-		t.Errorf("Expected at least 6 builtin recipes, got %d", len(recipes))
-	}
-
-	names := make(map[string]bool)
-	for _, r := range recipes {
-		if r.Name == "" {
-			t.Error("Recipe has empty name")
-		}
-		if names[r.Name] {
-			t.Errorf("Duplicate recipe name: %s", r.Name)
-		}
-		names[r.Name] = true
-	}
-}
-
 func TestRecipeStructTags(t *testing.T) {
 	// Verify JSON/YAML struct tags exist by checking marshaling works
-	r := recipe.DefaultRecipe()
+	r := recipe.Recipe{
+		Name: "test",
+		Filters: recipe.FilterConfig{
+			Status: []string{"open"},
+		},
+	}
 
 	// Just verify the struct can be used (compile-time check)
 	if r.Name == "" {
