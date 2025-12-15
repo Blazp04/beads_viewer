@@ -343,18 +343,23 @@ func (h *HistoryModel) renderHeader() string {
 		Render("[H] to close")
 
 	// Combine with spacing
-	spacer := strings.Repeat(" ", h.width-lipgloss.Width(title)-lipgloss.Width(filterInfo)-lipgloss.Width(closeHint))
-	if spacer == "" {
-		spacer = " "
+	spacerWidth := h.width - lipgloss.Width(title) - lipgloss.Width(filterInfo) - lipgloss.Width(closeHint)
+	if spacerWidth < 1 {
+		spacerWidth = 1
 	}
+	spacer := strings.Repeat(" ", spacerWidth)
 
 	headerLine := lipgloss.JoinHorizontal(lipgloss.Top, title, filterInfo, spacer, closeHint)
 
 	// Add separator line
+	separatorWidth := h.width
+	if separatorWidth < 1 {
+		separatorWidth = 1
+	}
 	separator := t.Renderer.NewStyle().
 		Foreground(t.Muted).
 		Width(h.width).
-		Render(strings.Repeat("─", h.width))
+		Render(strings.Repeat("─", separatorWidth))
 
 	return lipgloss.JoinVertical(lipgloss.Left, headerLine, separator)
 }
@@ -385,7 +390,11 @@ func (h *HistoryModel) renderListPanel(width, height int) string {
 	// Build list content
 	var lines []string
 	lines = append(lines, header)
-	lines = append(lines, strings.Repeat("─", width-4))
+	sepWidth := width - 4
+	if sepWidth < 1 {
+		sepWidth = 1
+	}
+	lines = append(lines, strings.Repeat("─", sepWidth))
 
 	visibleItems := height - 5 // Account for header, separator, border
 	if visibleItems < 1 {
@@ -501,7 +510,11 @@ func (h *HistoryModel) renderDetailPanel(width, height int) string {
 	var lines []string
 	lines = append(lines, header)
 	lines = append(lines, beadInfoStyle.Render(beadInfo))
-	lines = append(lines, strings.Repeat("─", width-4))
+	detailSepWidth := width - 4
+	if detailSepWidth < 1 {
+		detailSepWidth = 1
+	}
+	lines = append(lines, strings.Repeat("─", detailSepWidth))
 
 	// Render commits
 	for i, commit := range hist.Commits {
