@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -76,6 +77,14 @@ func (e *Executor) RunPostExport() error {
 	return firstError
 }
 
+// getShellCommand returns the shell and flag to use for executing commands
+func getShellCommand() (string, string) {
+	if runtime.GOOS == "windows" {
+		return "cmd", "/C"
+	}
+	return "sh", "-c"
+}
+
 // runHook executes a single hook with timeout and environment
 func (e *Executor) runHook(hook Hook, phase HookPhase) HookResult {
 	result := HookResult{
@@ -94,7 +103,8 @@ func (e *Executor) runHook(hook Hook, phase HookPhase) HookResult {
 	defer cancel()
 
 	// Create command - use shell to interpret the command
-	cmd := exec.CommandContext(ctx, "sh", "-c", hook.Command)
+	shell, flag := getShellCommand()
+	cmd := exec.CommandContext(ctx, shell, flag, hook.Command)
 
 	// Build environment
 	cmd.Env = os.Environ()

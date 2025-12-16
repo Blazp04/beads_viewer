@@ -309,8 +309,11 @@ func (r *Release) FindChecksumAsset() *Asset {
 	return nil
 }
 
-// downloadFile downloads a file from URL to a local path
-func downloadFile(url, destPath string) error {
+// downloadFile downloads a file from URL to a local path.
+//
+// If expectedSize is > 0, the download is size-verified against the HTTP Content-Length
+// (when present) and the number of bytes written.
+func downloadFile(url, destPath string, expectedSize int64) error {
 	client := &http.Client{Timeout: 5 * time.Minute}
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -328,15 +331,23 @@ func downloadFile(url, destPath string) error {
 		return fmt.Errorf("download returned status: %s", resp.Status)
 	}
 
+	if expectedSize > 0 && resp.ContentLength > 0 && resp.ContentLength != expectedSize {
+		return fmt.Errorf("size mismatch: expected %d, got header %d", expectedSize, resp.ContentLength)
+	}
+
 	out, err := os.Create(destPath)
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
 	}
 	defer out.Close()
 
-	_, err = io.Copy(out, resp.Body)
+	n, err := io.Copy(out, resp.Body)
 	if err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
+	}
+
+	if expectedSize > 0 && n != expectedSize {
+		return fmt.Errorf("downloaded size mismatch: expected %d, got %d", expectedSize, n)
 	}
 
 	return nil
@@ -356,11 +367,24 @@ func parseChecksums(checksumPath string) (map[string]string, error) {
 		if line == "" {
 			continue
 		}
-		// Format: "sha256  filename" (two spaces)
+
+		// Format: "<sha256> <whitespace> <filename (may include spaces)>"
 		parts := strings.Fields(line)
-		if len(parts) >= 2 {
-			checksums[parts[len(parts)-1]] = parts[0]
+		if len(parts) < 2 {
+			continue
 		}
+
+		hash := parts[0]
+		if len(line) < len(hash) || !strings.HasPrefix(line, hash) {
+			continue
+		}
+
+		filename := strings.TrimSpace(line[len(hash):])
+		if filename == "" {
+			continue
+		}
+
+		checksums[filename] = hash
 	}
 	return checksums, nil
 }
@@ -489,7 +513,7 @@ func PerformUpdate(release *Release, skipConfirm bool) (*UpdateResult, error) {
 	// Download archive
 	archivePath := filepath.Join(tmpDir, asset.Name)
 	fmt.Printf("Downloading %s...\n", release.TagName)
-	if err := downloadFile(asset.BrowserDownloadURL, archivePath); err != nil {
+	if err := downloadFile(asset.BrowserDownloadURL, archivePath, asset.Size); err != nil {
 		return nil, fmt.Errorf("download failed: %w", err)
 	}
 
@@ -497,7 +521,7 @@ func PerformUpdate(release *Release, skipConfirm bool) (*UpdateResult, error) {
 	checksumAsset := release.FindChecksumAsset()
 	if checksumAsset != nil {
 		checksumPath := filepath.Join(tmpDir, "checksums.txt")
-		if err := downloadFile(checksumAsset.BrowserDownloadURL, checksumPath); err != nil {
+		if err := downloadFile(checksumAsset.BrowserDownloadURL, checksumPath, checksumAsset.Size); err != nil {
 			return nil, fmt.Errorf("checksum download failed: %w", err)
 		}
 
