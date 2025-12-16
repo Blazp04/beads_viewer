@@ -174,9 +174,14 @@ func singleSourceBetweenness(g *simple.DirectedGraph, source graph.Node, bc map[
 		stack = append(stack, v)
 
 		to := g.From(v) // Outgoing edges
+		var neighbors []int64
 		for to.Next() {
-			w := to.Node().ID()
+			neighbors = append(neighbors, to.Node().ID())
+		}
+		// Sort neighbors to ensure deterministic BFS and predecessor order
+		sort.Slice(neighbors, func(i, j int) bool { return neighbors[i] < neighbors[j] })
 
+		for _, w := range neighbors {
 			// Path discovery
 			if dist[w] < 0 {
 				dist[w] = dist[v] + 1

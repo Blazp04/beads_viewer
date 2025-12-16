@@ -1,7 +1,6 @@
 package analysis
 
 import (
-	"fmt"
 	"sort"
 
 	"gonum.org/v1/gonum/graph"
@@ -35,17 +34,14 @@ func findCyclesSafe(g graph.Directed, limit int) [][]graph.Node {
 	}
 
 	// Sort cycles for determinism
-	// 1. By length (descending) - longer cycles first? Or shorter?
-	// The test expects determinism. Let's do length ascending (shorter first usually preferred)
-	// then by ID of first node.
+	// 1. By length (ascending - shortest cycles are more interesting/fixable)
+	// 2. By ID of first node (numerical)
 	sort.Slice(cycles, func(i, j int) bool {
 		if len(cycles[i]) != len(cycles[j]) {
 			return len(cycles[i]) < len(cycles[j])
 		}
-		// Compare first node IDs as tie-breaker
-		id1 := fmt.Sprintf("%d", cycles[i][0].ID())
-		id2 := fmt.Sprintf("%d", cycles[j][0].ID())
-		return id1 < id2
+		// Compare first node IDs as tie-breaker (numerical)
+		return cycles[i][0].ID() < cycles[j][0].ID()
 	})
 
 	return cycles
