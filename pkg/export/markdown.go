@@ -175,8 +175,22 @@ func GenerateMarkdown(issues []model.Issue, title string) (string, error) {
 		}
 		sb.WriteString(fmt.Sprintf("    class %s %s\n", safeID, class))
 
+		// Sort dependencies for deterministic output
+		sortedDeps := make([]*model.Dependency, len(i.Dependencies))
+		copy(sortedDeps, i.Dependencies)
+		sort.Slice(sortedDeps, func(a, b int) bool {
+			// Handle nil safety just in case
+			if sortedDeps[a] == nil {
+				return false
+			}
+			if sortedDeps[b] == nil {
+				return true
+			}
+			return sortedDeps[a].DependsOnID < sortedDeps[b].DependsOnID
+		})
+
 		// Add edges for dependencies
-		for _, dep := range i.Dependencies {
+		for _, dep := range sortedDeps {
 			if dep == nil {
 				continue
 			}
@@ -212,7 +226,10 @@ func GenerateMarkdown(issues []model.Issue, title string) (string, error) {
 		sb.WriteString(fmt.Sprintf("| **Priority** | %s |\n", getPriorityLabel(i.Priority)))
 		sb.WriteString(fmt.Sprintf("| **Status** | %s %s |\n", getStatusEmoji(string(i.Status)), i.Status))
 		if i.Assignee != "" {
-			escapedAssignee := strings.ReplaceAll(i.Assignee, "|", "\\|")
+			// Sanitize assignee: replace newlines with spaces, escape pipes
+			cleanAssignee := strings.ReplaceAll(i.Assignee, "\n", " ")
+			cleanAssignee = strings.ReplaceAll(cleanAssignee, "\r", "")
+			escapedAssignee := strings.ReplaceAll(cleanAssignee, "|", "\\|")
 			sb.WriteString(fmt.Sprintf("| **Assignee** | @%s |\n", escapedAssignee))
 		}
 		sb.WriteString(fmt.Sprintf("| **Created** | %s |\n", i.CreatedAt.Format("2006-01-02 15:04")))
@@ -221,10 +238,12 @@ func GenerateMarkdown(issues []model.Issue, title string) (string, error) {
 			sb.WriteString(fmt.Sprintf("| **Closed** | %s |\n", i.ClosedAt.Format("2006-01-02 15:04")))
 		}
 		if len(i.Labels) > 0 {
-			// Escape pipe characters in labels to avoid breaking markdown table
+			// Escape pipe characters and sanitize newlines in labels
 			escapedLabels := make([]string, len(i.Labels))
 			for idx, label := range i.Labels {
-				escapedLabels[idx] = strings.ReplaceAll(label, "|", "\\|")
+				cleanLabel := strings.ReplaceAll(label, "\n", " ")
+				cleanLabel = strings.ReplaceAll(cleanLabel, "\r", "")
+				escapedLabels[idx] = strings.ReplaceAll(cleanLabel, "|", "\\|")
 			}
 			sb.WriteString(fmt.Sprintf("| **Labels** | %s |\n", strings.Join(escapedLabels, ", ")))
 		}

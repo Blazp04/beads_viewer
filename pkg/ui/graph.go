@@ -907,6 +907,17 @@ func smartTruncateID(id string, maxLen int) string {
 		return ""
 	}
 
+	clamp := func(s string) string {
+		r := []rune(s)
+		if len(r) <= maxLen {
+			return s
+		}
+		if maxLen == 1 {
+			return string(r[:1])
+		}
+		return string(r[:maxLen-1]) + "…"
+	}
+
 	runes := []rune(id)
 	if len(runes) <= maxLen {
 		return id
@@ -917,12 +928,12 @@ func smartTruncateID(id string, maxLen int) string {
 		return c == '_' || c == '-'
 	}
 	parts := strings.FieldsFunc(id, f)
-	
+
 	sep := "_"
 	if strings.Contains(id, "-") && !strings.Contains(id, "_") {
 		sep = "-"
 	}
-	
+
 	if len(parts) > 2 {
 		var abbrev strings.Builder
 		runeCount := 0
@@ -951,14 +962,9 @@ func smartTruncateID(id string, maxLen int) string {
 			}
 		}
 		result := abbrev.String()
-		if len([]rune(result)) <= maxLen {
-			return result
-		}
+		return clamp(result)
 	}
 
 	// Fallback: simple truncation
-	if maxLen > 1 {
-		return string(runes[:maxLen-1]) + "…"
-	}
-	return string(runes[:maxLen])
+	return clamp(string(runes))
 }
