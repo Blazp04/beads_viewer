@@ -1,0 +1,343 @@
+package export
+
+import (
+	"database/sql"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	_ "github.com/mattn/go-sqlite3"
+)
+
+// containsString is a helper for checking error messages
+func containsString(s, substr string) bool {
+	return strings.Contains(s, substr)
+}
+
+func TestCreateSchema(t *testing.T) {
+	// Create temp file for test database
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.sqlite3")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	// Create schema
+	if err := CreateSchema(db); err != nil {
+		t.Fatalf("CreateSchema failed: %v", err)
+	}
+
+	// Verify tables exist
+	tables := []string{"issues", "dependencies", "issue_metrics", "triage_recommendations", "export_meta"}
+	for _, table := range tables {
+		var name string
+		err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name)
+		if err != nil {
+			t.Errorf("Table %s not found: %v", table, err)
+		}
+	}
+
+	// Verify indexes exist
+	indexes := []string{"idx_issues_status", "idx_issues_priority", "idx_deps_issue"}
+	for _, idx := range indexes {
+		var name string
+		err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`, idx).Scan(&name)
+		if err != nil {
+			t.Errorf("Index %s not found: %v", idx, err)
+		}
+	}
+}
+
+func TestInsertAndQueryIssues(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.sqlite3")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	if err := CreateSchema(db); err != nil {
+		t.Fatalf("CreateSchema failed: %v", err)
+	}
+
+	// Insert test issue
+	_, err = db.Exec(`
+		INSERT INTO issues (id, title, description, status, priority, issue_type, labels, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, "test-1", "Test Issue", "Test description", "open", 2, "task", `["test"]`, "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z")
+	if err != nil {
+		t.Fatalf("Insert issue failed: %v", err)
+	}
+
+	// Insert test metrics
+	_, err = db.Exec(`
+		INSERT INTO issue_metrics (issue_id, pagerank, betweenness, critical_path_depth, triage_score, blocks_count, blocked_by_count)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, "test-1", 0.15, 0.05, 3, 0.75, 2, 1)
+	if err != nil {
+		t.Fatalf("Insert metrics failed: %v", err)
+	}
+
+	// Query back
+	var id, title, status string
+	var priority int
+	err = db.QueryRow(`SELECT id, title, status, priority FROM issues WHERE id = ?`, "test-1").Scan(&id, &title, &status, &priority)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if id != "test-1" || title != "Test Issue" || status != "open" || priority != 2 {
+		t.Errorf("Unexpected values: id=%s title=%s status=%s priority=%d", id, title, status, priority)
+	}
+
+	// Query metrics
+	var pagerank, triageScore float64
+	err = db.QueryRow(`SELECT pagerank, triage_score FROM issue_metrics WHERE issue_id = ?`, "test-1").Scan(&pagerank, &triageScore)
+	if err != nil {
+		t.Fatalf("Query metrics failed: %v", err)
+	}
+
+	if pagerank != 0.15 || triageScore != 0.75 {
+		t.Errorf("Unexpected metrics: pagerank=%f triageScore=%f", pagerank, triageScore)
+	}
+}
+
+func TestCreateFTSIndex(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.sqlite3")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	if err := CreateSchema(db); err != nil {
+		t.Fatalf("CreateSchema failed: %v", err)
+	}
+
+	// Insert test data
+	_, err = db.Exec(`
+		INSERT INTO issues (id, title, description, status, priority, issue_type, labels, created_at, updated_at)
+		VALUES
+			(?, ?, ?, ?, ?, ?, ?, ?, ?),
+			(?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		"fts-1", "Authentication Bug", "Login fails on mobile", "open", 1, "bug", `["auth", "mobile"]`, "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z",
+		"fts-2", "Add Dark Mode", "Implement dark theme for UI", "open", 3, "feature", `["ui", "theme"]`, "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z",
+	)
+	if err != nil {
+		t.Fatalf("Insert test data failed: %v", err)
+	}
+
+	// Create FTS index - skip if FTS5 not available (requires sqlite3 compiled with FTS5)
+	if err := CreateFTSIndex(db); err != nil {
+		if containsString(err.Error(), "no such module: fts5") {
+			t.Skip("FTS5 not available in this SQLite build - skipping (will work with sql.js in browser)")
+		}
+		t.Fatalf("CreateFTSIndex failed: %v", err)
+	}
+
+	// Test FTS search
+	var count int
+	err = db.QueryRow(`SELECT COUNT(*) FROM issues_fts WHERE issues_fts MATCH 'authentication'`).Scan(&count)
+	if err != nil {
+		t.Fatalf("FTS query failed: %v", err)
+	}
+
+	if count != 1 {
+		t.Errorf("Expected 1 FTS match, got %d", count)
+	}
+
+	// Test prefix search
+	err = db.QueryRow(`SELECT COUNT(*) FROM issues_fts WHERE issues_fts MATCH 'dark*'`).Scan(&count)
+	if err != nil {
+		t.Fatalf("FTS prefix query failed: %v", err)
+	}
+
+	if count != 1 {
+		t.Errorf("Expected 1 FTS prefix match, got %d", count)
+	}
+}
+
+func TestCreateMaterializedViews(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.sqlite3")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	if err := CreateSchema(db); err != nil {
+		t.Fatalf("CreateSchema failed: %v", err)
+	}
+
+	// Insert test data
+	_, err = db.Exec(`
+		INSERT INTO issues (id, title, description, status, priority, issue_type, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, "mv-1", "Test MV", "Test materialized view", "open", 2, "task", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z")
+	if err != nil {
+		t.Fatalf("Insert failed: %v", err)
+	}
+
+	_, err = db.Exec(`
+		INSERT INTO issue_metrics (issue_id, pagerank, triage_score, blocks_count, blocked_by_count)
+		VALUES (?, ?, ?, ?, ?)
+	`, "mv-1", 0.25, 0.80, 3, 0)
+	if err != nil {
+		t.Fatalf("Insert metrics failed: %v", err)
+	}
+
+	// Create materialized views
+	if err := CreateMaterializedViews(db); err != nil {
+		t.Fatalf("CreateMaterializedViews failed: %v", err)
+	}
+
+	// Verify view exists and has data
+	var id string
+	var pagerank, triageScore float64
+	var blocksCount int
+	err = db.QueryRow(`
+		SELECT id, pagerank, triage_score, blocks_count
+		FROM issue_overview_mv
+		WHERE id = ?
+	`, "mv-1").Scan(&id, &pagerank, &triageScore, &blocksCount)
+	if err != nil {
+		t.Fatalf("Query MV failed: %v", err)
+	}
+
+	if pagerank != 0.25 || triageScore != 0.80 || blocksCount != 3 {
+		t.Errorf("Unexpected MV values: pagerank=%f triageScore=%f blocksCount=%d", pagerank, triageScore, blocksCount)
+	}
+}
+
+func TestInsertMetaValue(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.sqlite3")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	if err := CreateSchema(db); err != nil {
+		t.Fatalf("CreateSchema failed: %v", err)
+	}
+
+	// Insert meta value
+	if err := InsertMetaValue(db, "version", "1.0.0"); err != nil {
+		t.Fatalf("InsertMetaValue failed: %v", err)
+	}
+
+	// Query it back
+	var value string
+	err = db.QueryRow(`SELECT value FROM export_meta WHERE key = ?`, "version").Scan(&value)
+	if err != nil {
+		t.Fatalf("Query meta failed: %v", err)
+	}
+
+	if value != "1.0.0" {
+		t.Errorf("Expected version 1.0.0, got %s", value)
+	}
+
+	// Test update (INSERT OR REPLACE)
+	if err := InsertMetaValue(db, "version", "1.0.1"); err != nil {
+		t.Fatalf("InsertMetaValue update failed: %v", err)
+	}
+
+	err = db.QueryRow(`SELECT value FROM export_meta WHERE key = ?`, "version").Scan(&value)
+	if err != nil {
+		t.Fatalf("Query meta after update failed: %v", err)
+	}
+
+	if value != "1.0.1" {
+		t.Errorf("Expected version 1.0.1, got %s", value)
+	}
+}
+
+func TestDefaultSQLiteExportConfig(t *testing.T) {
+	config := DefaultSQLiteExportConfig()
+
+	if config.ChunkThreshold != 5*1024*1024 {
+		t.Errorf("Expected ChunkThreshold 5MB, got %d", config.ChunkThreshold)
+	}
+
+	if config.ChunkSize != 1*1024*1024 {
+		t.Errorf("Expected ChunkSize 1MB, got %d", config.ChunkSize)
+	}
+
+	if config.PageSize != 1024 {
+		t.Errorf("Expected PageSize 1024, got %d", config.PageSize)
+	}
+
+	if !config.IncludeRobotOutputs {
+		t.Error("Expected IncludeRobotOutputs true")
+	}
+}
+
+// TestOptimizeDatabase verifies optimization runs without error
+func TestOptimizeDatabase(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.sqlite3")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	if err := CreateSchema(db); err != nil {
+		t.Fatalf("CreateSchema failed: %v", err)
+	}
+
+	// Insert some data
+	_, _ = db.Exec(`
+		INSERT INTO issues (id, title, description, status, priority, issue_type, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, "opt-1", "Optimize Test", "Testing optimization", "open", 2, "task", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z")
+
+	// Create FTS before optimize - skip if not available
+	if err := CreateFTSIndex(db); err != nil {
+		if containsString(err.Error(), "no such module: fts5") {
+			t.Log("FTS5 not available - testing optimize without FTS")
+		} else {
+			t.Fatalf("CreateFTSIndex failed: %v", err)
+		}
+	}
+
+	// Optimize should not error
+	if err := OptimizeDatabase(db, 1024); err != nil {
+		t.Fatalf("OptimizeDatabase failed: %v", err)
+	}
+
+	// Verify database is still queryable
+	var count int
+	err = db.QueryRow(`SELECT COUNT(*) FROM issues`).Scan(&count)
+	if err != nil {
+		t.Fatalf("Query after optimize failed: %v", err)
+	}
+
+	if count != 1 {
+		t.Errorf("Expected 1 issue after optimize, got %d", count)
+	}
+
+	// Verify file exists and is non-empty
+	info, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("Stat db file failed: %v", err)
+	}
+
+	if info.Size() == 0 {
+		t.Error("Database file is empty after optimize")
+	}
+}
