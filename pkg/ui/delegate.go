@@ -86,6 +86,15 @@ func (d IssueDelegate) Render(w io.Writer, m list.Model, index int, listItem lis
 		}
 	}
 
+	// Sparkline (Graph Score) - visualization of importance
+	if width > 120 {
+		spark := RenderSparkline(i.GraphScore, 5)
+		sparkColor := GetHeatmapColor(i.GraphScore)
+		sparkStyle := t.Renderer.NewStyle().Foreground(sparkColor)
+		rightParts = append(rightParts, sparkStyle.Render(spark))
+		rightWidth += 6 // 5 + 1 spacing
+	}
+
 	// Assignee (if present and we have room)
 	if width > 100 && i.Issue.Assignee != "" {
 		assignee := truncateRunesHelper(i.Issue.Assignee, 12, "…")

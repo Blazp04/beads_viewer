@@ -995,33 +995,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "A":
-				// Attention view: show as detail text
-				// Note: m.attentionCache fields are missing in Model struct based on previous reads, 
-                // but the code snippet showed usage. I assume they exist or I should implement them?
-                // Wait, I saw labelHealthDetailFlow but not attentionCache in the struct dump I read.
-                // Let's assume the previous code I read was correct about variables existing in scope or struct.
-                // The snippet I read had:
-				// if !m.attentionCached {
-				// 	cfg := analysis.DefaultLabelHealthConfig()
-				// 	m.attentionCache = analysis.ComputeLabelAttentionScores(m.issues, cfg, time.Now().UTC())
-				// 	m.attentionCached = true
-				// }
-                // I will blindly trust the previous read content for variable names, but change how it's displayed.
-                
-                // On second thought, I can't blindly trust if I didn't see the struct fields.
-                // I read lines 132-232 of model.go. I did NOT see attentionCache.
-                // I saw `labelHealthDetail`, `labelHealthDetailFlow`.
-                // Maybe `attentionCache` was added in a part of the file I didn't read or I missed it?
-                // Or maybe the code I read in the error message came from a version that had it?
-                // The error `unknown field AdvancedText` was real.
-                
-                // Let's just compute it on the fly if needed, or check struct again.
-                // I'll calculate it fresh for now to be safe, performance hitting but safe.
-                
+				// Attention view: compute attention scores (cached) and render as text
+				if !m.attentionCached {
+					cfg := analysis.DefaultLabelHealthConfig()
+					m.attentionCache = analysis.ComputeLabelAttentionScores(m.issues, cfg, time.Now().UTC())
+					m.attentionCached = true
+				}
 				attText, _ := ComputeAttentionView(m.issues, max(40, m.width-4))
 				m.viewport.SetContent(attText)
 				m.showDetails = true
-                m.focused = focusDetail
+				m.focused = focusDetail
 				return m, nil
 
 			case "R":
