@@ -238,6 +238,28 @@ impl DiGraph {
         use crate::algorithms::critical_path::critical_path_length;
         critical_path_length(self)
     }
+
+    /// Compute PageRank scores for all nodes.
+    /// Returns array of scores in node index order.
+    #[wasm_bindgen(js_name = pagerank)]
+    pub fn pagerank(&self, damping: f64, max_iterations: u32) -> JsValue {
+        use crate::algorithms::pagerank::{pagerank, PageRankConfig};
+        let config = PageRankConfig {
+            damping,
+            max_iterations,
+            tolerance: 1e-6,
+        };
+        let scores = pagerank(self, &config);
+        serde_wasm_bindgen::to_value(&scores).unwrap_or(JsValue::NULL)
+    }
+
+    /// Compute PageRank with default parameters (damping=0.85, max_iterations=100).
+    #[wasm_bindgen(js_name = pagerankDefault)]
+    pub fn pagerank_default(&self) -> JsValue {
+        use crate::algorithms::pagerank::pagerank_default;
+        let scores = pagerank_default(self);
+        serde_wasm_bindgen::to_value(&scores).unwrap_or(JsValue::NULL)
+    }
 }
 
 // Internal methods (not exposed to WASM)
