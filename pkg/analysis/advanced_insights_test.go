@@ -349,3 +349,213 @@ func TestTopKSetCapping(t *testing.T) {
 		t.Error("expected Capped=true when results exceed limit")
 	}
 }
+
+// Coverage Set Tests (bv-152)
+
+func TestCoverageSetEmpty(t *testing.T) {
+	an := NewAnalyzer([]model.Issue{})
+	cfg := DefaultAdvancedInsightsConfig()
+	insights := an.GenerateAdvancedInsights(cfg)
+
+	if insights.CoverageSet == nil {
+		t.Fatal("expected CoverageSet result")
+	}
+	if insights.CoverageSet.Status.State != "available" {
+		t.Errorf("expected available state, got %s", insights.CoverageSet.Status.State)
+	}
+	if len(insights.CoverageSet.Items) != 0 {
+		t.Error("expected no items for empty graph")
+	}
+	if insights.CoverageSet.TotalEdges != 0 {
+		t.Errorf("expected 0 total edges, got %d", insights.CoverageSet.TotalEdges)
+	}
+	// Empty coverage is vacuously 100%
+	if insights.CoverageSet.CoverageRatio != 1.0 {
+		t.Errorf("expected coverage ratio 1.0 for empty graph, got %f", insights.CoverageSet.CoverageRatio)
+	}
+}
+
+func TestCoverageSetNoEdges(t *testing.T) {
+	// Disconnected nodes with no dependencies
+	issues := []model.Issue{
+		{ID: "A", Status: model.StatusOpen},
+		{ID: "B", Status: model.StatusOpen},
+		{ID: "C", Status: model.StatusOpen},
+	}
+
+	an := NewAnalyzer(issues)
+	cfg := DefaultAdvancedInsightsConfig()
+	insights := an.GenerateAdvancedInsights(cfg)
+
+	if insights.CoverageSet.Status.State != "available" {
+		t.Errorf("expected available state, got %s", insights.CoverageSet.Status.State)
+	}
+	if len(insights.CoverageSet.Items) != 0 {
+		t.Error("expected no items for graph with no edges")
+	}
+	if insights.CoverageSet.TotalEdges != 0 {
+		t.Errorf("expected 0 total edges, got %d", insights.CoverageSet.TotalEdges)
+	}
+}
+
+func TestCoverageSetLinearChain(t *testing.T) {
+	// A -> B -> C -> D: edges A-B, B-C, C-D
+	// Greedy vertex cover should pick B or C first (highest degree)
+	issues := []model.Issue{
+		{ID: "A", Status: model.StatusOpen},
+		{ID: "B", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "A", Type: model.DepBlocks}}},
+		{ID: "C", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "B", Type: model.DepBlocks}}},
+		{ID: "D", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "C", Type: model.DepBlocks}}},
+	}
+
+	an := NewAnalyzer(issues)
+	cfg := DefaultAdvancedInsightsConfig()
+	insights := an.GenerateAdvancedInsights(cfg)
+
+	if insights.CoverageSet == nil {
+		t.Fatal("expected CoverageSet result")
+	}
+	if insights.CoverageSet.Status.State != "available" {
+		t.Errorf("expected available state, got %s", insights.CoverageSet.Status.State)
+	}
+	if insights.CoverageSet.TotalEdges != 3 {
+		t.Errorf("expected 3 edges, got %d", insights.CoverageSet.TotalEdges)
+	}
+	// With 3 edges in a chain, greedy should pick 2 nodes (B and C)
+	// and cover all edges
+	if insights.CoverageSet.EdgesCovered != 3 {
+		t.Errorf("expected all 3 edges covered, got %d", insights.CoverageSet.EdgesCovered)
+	}
+	if insights.CoverageSet.CoverageRatio != 1.0 {
+		t.Errorf("expected 100%% coverage, got %f", insights.CoverageSet.CoverageRatio)
+	}
+}
+
+func TestCoverageSetHubPattern(t *testing.T) {
+	// Hub -> A, B, C, D: hub has degree 4
+	// Selecting hub alone covers all 4 edges
+	issues := []model.Issue{
+		{ID: "Hub", Status: model.StatusOpen},
+		{ID: "A", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "Hub", Type: model.DepBlocks}}},
+		{ID: "B", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "Hub", Type: model.DepBlocks}}},
+		{ID: "C", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "Hub", Type: model.DepBlocks}}},
+		{ID: "D", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "Hub", Type: model.DepBlocks}}},
+	}
+
+	an := NewAnalyzer(issues)
+	cfg := DefaultAdvancedInsightsConfig()
+	insights := an.GenerateAdvancedInsights(cfg)
+
+	if insights.CoverageSet == nil {
+		t.Fatal("expected CoverageSet result")
+	}
+	// Hub should be picked first and cover all edges
+	if len(insights.CoverageSet.Items) < 1 {
+		t.Fatal("expected at least 1 item")
+	}
+	if insights.CoverageSet.Items[0].ID != "Hub" {
+		t.Errorf("first pick should be Hub (highest degree), got %s", insights.CoverageSet.Items[0].ID)
+	}
+	if insights.CoverageSet.Items[0].EdgesAdded != 4 {
+		t.Errorf("Hub should cover 4 edges, got %d", insights.CoverageSet.Items[0].EdgesAdded)
+	}
+	// All edges should be covered by just the hub
+	if insights.CoverageSet.EdgesCovered != 4 {
+		t.Errorf("expected 4 edges covered, got %d", insights.CoverageSet.EdgesCovered)
+	}
+}
+
+func TestCoverageSetDeterministic(t *testing.T) {
+	// Run multiple times and verify deterministic output
+	issues := []model.Issue{
+		{ID: "A", Status: model.StatusOpen},
+		{ID: "B", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "A", Type: model.DepBlocks}}},
+		{ID: "C", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "A", Type: model.DepBlocks}}},
+		{ID: "D", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "B", Type: model.DepBlocks}}},
+	}
+
+	cfg := DefaultAdvancedInsightsConfig()
+	var firstResult *CoverageSetResult
+
+	for i := 0; i < 5; i++ {
+		an := NewAnalyzer(issues)
+		insights := an.GenerateAdvancedInsights(cfg)
+
+		if firstResult == nil {
+			firstResult = insights.CoverageSet
+			continue
+		}
+
+		// Compare with first result
+		if len(insights.CoverageSet.Items) != len(firstResult.Items) {
+			t.Fatalf("iteration %d: item count changed", i)
+		}
+		for j, item := range insights.CoverageSet.Items {
+			if item.ID != firstResult.Items[j].ID {
+				t.Errorf("iteration %d: item %d ID changed from %s to %s", i, j, firstResult.Items[j].ID, item.ID)
+			}
+		}
+	}
+}
+
+func TestCoverageSetCapping(t *testing.T) {
+	// Create graph with many edges that would need more than 2 nodes to cover
+	// Triangle: A-B, B-C, A-C (all nodes have degree 2)
+	issues := []model.Issue{
+		{ID: "A", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "C", Type: model.DepBlocks}}},
+		{ID: "B", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "A", Type: model.DepBlocks}}},
+		{ID: "C", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "B", Type: model.DepBlocks}}},
+	}
+
+	an := NewAnalyzer(issues)
+	cfg := DefaultAdvancedInsightsConfig()
+	cfg.CoverageSetLimit = 1 // Cap at 1
+	insights := an.GenerateAdvancedInsights(cfg)
+
+	if len(insights.CoverageSet.Items) > 1 {
+		t.Errorf("expected at most 1 item (capped), got %d", len(insights.CoverageSet.Items))
+	}
+	// Should be capped since 1 node can't cover all 3 edges in a triangle
+	if !insights.CoverageSet.Status.Capped {
+		t.Error("expected Capped=true when not all edges covered")
+	}
+}
+
+func TestCoverageSetClosedIssuesIgnored(t *testing.T) {
+	// Closed issues should not be considered
+	issues := []model.Issue{
+		{ID: "A", Status: model.StatusClosed}, // Closed - should be ignored
+		{ID: "B", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "A", Type: model.DepBlocks}}},
+		{ID: "C", Status: model.StatusOpen},
+	}
+
+	an := NewAnalyzer(issues)
+	cfg := DefaultAdvancedInsightsConfig()
+	insights := an.GenerateAdvancedInsights(cfg)
+
+	// Edge B->A should be ignored since A is closed
+	// C has no deps, so no edges exist
+	if insights.CoverageSet.TotalEdges != 0 {
+		t.Errorf("expected 0 edges (closed issue ignored), got %d", insights.CoverageSet.TotalEdges)
+	}
+}
+
+func TestCoverageSetSelectionSequence(t *testing.T) {
+	// Verify selection sequence is assigned correctly
+	issues := []model.Issue{
+		{ID: "Hub", Status: model.StatusOpen},
+		{ID: "A", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "Hub", Type: model.DepBlocks}}},
+		{ID: "B", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "Hub", Type: model.DepBlocks}}},
+	}
+
+	an := NewAnalyzer(issues)
+	cfg := DefaultAdvancedInsightsConfig()
+	insights := an.GenerateAdvancedInsights(cfg)
+
+	for i, item := range insights.CoverageSet.Items {
+		expectedSeq := i + 1
+		if item.SelectionSeq != expectedSeq {
+			t.Errorf("item %d: expected SelectionSeq=%d, got %d", i, expectedSeq, item.SelectionSeq)
+		}
+	}
+}

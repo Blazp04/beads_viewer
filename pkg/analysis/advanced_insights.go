@@ -181,7 +181,7 @@ type CycleBreakItem struct {
 func DefaultUsageHints() map[string]string {
 	return map[string]string{
 		"topk_set":      "Best k issues to complete for max downstream unlock. Work these in order.",
-		"coverage_set":  "Minimal set covering all critical paths. Ensures no path is neglected.",
+		"coverage_set":  "Small vertex cover touching all dependency edges. Use for breadth coverage.",
 		"k_paths":       "K-shortest critical paths. Focus on issues appearing in multiple paths.",
 		"parallel_cut":  "Issues that enable parallel work. Complete to maximize team throughput.",
 		"parallel_gain": "Parallelization improvement from completing each issue.",
