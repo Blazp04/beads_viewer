@@ -1128,10 +1128,10 @@ func formatUnblockList(ids []string) string {
 	if len(ids) == 0 {
 		return ""
 	}
-	if len(ids) <= 3 {
-		// joinStrings is defined in diff.go
-		return joinStrings(ids, ", ")
-	}
+    if len(ids) <= 3 {
+        // joinStrings is defined in diff.go
+        return joinStrings(ids, ", ")
+    }
 	return fmt.Sprintf("%s, %s, +%d more", ids[0], ids[1], len(ids)-2)
 }
 
