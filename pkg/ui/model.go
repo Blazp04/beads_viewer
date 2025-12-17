@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -405,7 +406,7 @@ func (m *Model) updateSemanticIDs(items []list.Item) {
 func NewModel(issues []model.Issue, activeRecipe *recipe.Recipe, beadsPath string) Model {
 	// Graph Analysis - Phase 1 is instant, Phase 2 runs in background
 	analyzer := analysis.NewAnalyzer(issues)
-	graphStats := analyzer.AnalyzeAsync()
+	graphStats := analyzer.AnalyzeAsync(context.Background())
 
 	// Sort issues
 	if activeRecipe != nil && activeRecipe.Sort.Field != "" {

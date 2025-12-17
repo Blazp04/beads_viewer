@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -467,7 +468,7 @@ func NewAnalyzer(issues []model.Issue) *Analyzer {
 //
 // If SetConfig was called, uses that config. Otherwise uses ConfigForSize() to
 // automatically select appropriate algorithms based on graph size.
-func (a *Analyzer) AnalyzeAsync() *GraphStats {
+func (a *Analyzer) AnalyzeAsync(ctx context.Context) *GraphStats {
 	var config AnalysisConfig
 	if a.config != nil {
 		config = *a.config
@@ -476,12 +477,12 @@ func (a *Analyzer) AnalyzeAsync() *GraphStats {
 		edgeCount := a.g.Edges().Len()
 		config = ConfigForSize(nodeCount, edgeCount)
 	}
-	return a.AnalyzeAsyncWithConfig(config)
+	return a.AnalyzeAsyncWithConfig(ctx, config)
 }
 
 // AnalyzeAsyncWithConfig performs graph analysis with a custom configuration.
 // This allows callers to override the default size-based algorithm selection.
-func (a *Analyzer) AnalyzeAsyncWithConfig(config AnalysisConfig) *GraphStats {
+func (a *Analyzer) AnalyzeAsyncWithConfig(ctx context.Context, config AnalysisConfig) *GraphStats {
 	nodeCount := len(a.issueMap)
 	edgeCount := a.g.Edges().Len()
 
@@ -510,6 +511,17 @@ func (a *Analyzer) AnalyzeAsyncWithConfig(config AnalysisConfig) *GraphStats {
 
 	// Handle empty graph - mark phase 2 ready immediately
 	if nodeCount == 0 {
+		stats.status = MetricStatus{
+			PageRank:     statusEntry{State: stateFromTiming(config.ComputePageRank, false)},
+			Betweenness:  statusEntry{State: stateFromTiming(config.ComputeBetweenness, false)},
+			Eigenvector:  statusEntry{State: stateFromTiming(config.ComputeEigenvector, false)},
+			HITS:         statusEntry{State: stateFromTiming(config.ComputeHITS, false)},
+			Critical:     statusEntry{State: stateFromTiming(config.ComputeCriticalPath, false)},
+			Cycles:       statusEntry{State: stateFromTiming(config.ComputeCycles, false)},
+			KCore:        statusEntry{State: "computed"},
+			Articulation: statusEntry{State: "computed"},
+			Slack:        statusEntry{State: "computed"},
+		}
 		stats.phase2Ready = true
 		close(stats.phase2Done)
 		return stats
@@ -519,7 +531,7 @@ func (a *Analyzer) AnalyzeAsyncWithConfig(config AnalysisConfig) *GraphStats {
 	a.computePhase1(stats)
 
 	// Phase 2: Expensive metrics in background goroutine
-	go a.computePhase2(stats, config)
+	go a.computePhase2(ctx, stats, config)
 
 	return stats
 }
@@ -527,7 +539,7 @@ func (a *Analyzer) AnalyzeAsyncWithConfig(config AnalysisConfig) *GraphStats {
 // Analyze performs synchronous graph analysis (for backward compatibility).
 // Blocks until all metrics are computed.
 func (a *Analyzer) Analyze() GraphStats {
-	stats := a.AnalyzeAsync()
+	stats := a.AnalyzeAsync(context.Background())
 	stats.WaitForPhase2()
 	// Return a copy with public fields populated for backward compatibility
 	return GraphStats{
@@ -555,7 +567,7 @@ func (a *Analyzer) Analyze() GraphStats {
 
 // AnalyzeWithConfig performs synchronous graph analysis with a custom configuration.
 func (a *Analyzer) AnalyzeWithConfig(config AnalysisConfig) GraphStats {
-	stats := a.AnalyzeAsyncWithConfig(config)
+	stats := a.AnalyzeAsyncWithConfig(context.Background(), config)
 	stats.WaitForPhase2()
 	return GraphStats{
 		OutDegree:         stats.OutDegree,
@@ -627,7 +639,7 @@ func (a *Analyzer) AnalyzeWithProfile(config AnalysisConfig) (*GraphStats, *Star
 
 	// Phase 2: Expensive metrics synchronously with timing
 	phase2Start := time.Now()
-	a.computePhase2WithProfile(stats, config, profile)
+	a.computePhase2WithProfile(context.Background(), stats, config, profile)
 	profile.Phase2 = time.Since(phase2Start)
 
 	stats.phase2Ready = true
@@ -671,7 +683,7 @@ func (a *Analyzer) computePhase1WithProfile(stats *GraphStats, profile *StartupP
 }
 
 // computePhase2WithProfile calculates expensive metrics with timing instrumentation.
-func (a *Analyzer) computePhase2WithProfile(stats *GraphStats, config AnalysisConfig, profile *StartupProfile) {
+func (a *Analyzer) computePhase2WithProfile(ctx context.Context, stats *GraphStats, config AnalysisConfig, profile *StartupProfile) {
 	localPageRank := make(map[string]float64)
 	localBetweenness := make(map[string]float64)
 	localEigenvector := make(map[string]float64)
@@ -688,7 +700,7 @@ func (a *Analyzer) computePhase2WithProfile(stats *GraphStats, config AnalysisCo
 	cyclesTruncated := false
 
 	// PageRank
-	if config.ComputePageRank {
+	if ctx.Err() == nil && config.ComputePageRank {
 		prStart := time.Now()
 		prDone := make(chan map[int64]float64, 1)
 		go func() {
@@ -713,12 +725,16 @@ func (a *Analyzer) computePhase2WithProfile(stats *GraphStats, config AnalysisCo
 			for id := range a.issueMap {
 				localPageRank[id] = uniform
 			}
+		case <-ctx.Done():
+			timer.Stop()
+			// Abort immediately
+			return
 		}
 		profile.PageRank = time.Since(prStart)
 	}
 
 	// Betweenness
-	if config.ComputeBetweenness {
+	if ctx.Err() == nil && config.ComputeBetweenness {
 		bwStart := time.Now()
 		bwDone := make(chan BetweennessResult, 1)
 		go func() {
@@ -755,12 +771,15 @@ func (a *Analyzer) computePhase2WithProfile(stats *GraphStats, config AnalysisCo
 			}
 		case <-timer.C:
 			profile.BetweennessTO = true
+		case <-ctx.Done():
+			timer.Stop()
+			return
 		}
 		profile.Betweenness = time.Since(bwStart)
 	}
 
 	// Eigenvector
-	if config.ComputeEigenvector {
+	if ctx.Err() == nil && config.ComputeEigenvector {
 		evStart := time.Now()
 		for id, score := range computeEigenvector(a.g) {
 			localEigenvector[a.nodeToID[id]] = score
@@ -769,7 +788,7 @@ func (a *Analyzer) computePhase2WithProfile(stats *GraphStats, config AnalysisCo
 	}
 
 	// HITS
-	if config.ComputeHITS && a.g.Edges().Len() > 0 {
+	if ctx.Err() == nil && config.ComputeHITS && a.g.Edges().Len() > 0 {
 		hitsStart := time.Now()
 		hitsDone := make(chan map[int64]network.HubAuthority, 1)
 		go func() {
@@ -791,12 +810,15 @@ func (a *Analyzer) computePhase2WithProfile(stats *GraphStats, config AnalysisCo
 			}
 		case <-timer.C:
 			profile.HITSTO = true
+		case <-ctx.Done():
+			timer.Stop()
+			return
 		}
 		profile.HITS = time.Since(hitsStart)
 	}
 
 	// Critical Path
-	if config.ComputeCriticalPath {
+	if ctx.Err() == nil && config.ComputeCriticalPath {
 		cpStart := time.Now()
 		sorted, err := topo.Sort(a.g)
 		if err == nil {
@@ -806,7 +828,7 @@ func (a *Analyzer) computePhase2WithProfile(stats *GraphStats, config AnalysisCo
 	}
 
 	// Cycles
-	if config.ComputeCycles {
+	if ctx.Err() == nil && config.ComputeCycles {
 		cyclesStart := time.Now()
 		maxCycles := config.MaxCyclesToStore
 		if maxCycles == 0 {
@@ -853,9 +875,17 @@ func (a *Analyzer) computePhase2WithProfile(stats *GraphStats, config AnalysisCo
 				}
 			case <-timer.C:
 				profile.CyclesTO = true
+			case <-ctx.Done():
+				timer.Stop()
+				return
 			}
 		}
 		profile.Cycles = time.Since(cyclesStart)
+	}
+
+	// Check cancellation before advanced signals
+	if ctx.Err() != nil {
+		return
 	}
 
 	// Advanced graph signals: k-core, articulation points (undirected), slack (bv-85)
@@ -948,7 +978,7 @@ func (a *Analyzer) computePhase1(stats *GraphStats) {
 // computePhase2 calculates expensive metrics in background.
 // Computes to local variables first, then atomically assigns under lock.
 // Respects the config to skip expensive algorithms for large graphs.
-func (a *Analyzer) computePhase2(stats *GraphStats, config AnalysisConfig) {
+func (a *Analyzer) computePhase2(ctx context.Context, stats *GraphStats, config AnalysisConfig) {
 	defer close(stats.phase2Done)
 
 	// Recover from panics to prevent crashing the entire application
@@ -979,7 +1009,7 @@ func (a *Analyzer) computePhase2(stats *GraphStats, config AnalysisConfig) {
 	// Use the profiled version logic to avoid duplication
 	// We discard the profile data as this is the standard run
 	dummyProfile := &StartupProfile{}
-	a.computePhase2WithProfile(stats, config, dummyProfile)
+	a.computePhase2WithProfile(ctx, stats, config, dummyProfile)
 }
 
 func (a *Analyzer) computeHeights(sorted []graph.Node) map[string]float64 {

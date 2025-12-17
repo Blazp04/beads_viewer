@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -327,7 +328,7 @@ func ComputeTriageWithOptionsAndTime(issues []model.Issue, opts TriageOptions, n
 
 	// Build analyzer
 	analyzer := NewAnalyzer(issues)
-	stats := analyzer.AnalyzeAsync()
+	stats := analyzer.AnalyzeAsync(context.Background())
 
 	// Triage requires advanced metrics (PageRank, etc.) for scoring, so we must wait
 	// independently of opts.WaitForPhase2 (which was previously redundant as ComputeImpactScores waited anyway)

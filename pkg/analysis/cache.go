@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -270,7 +271,7 @@ func (ca *CachedAnalyzer) AnalyzeAsync() *GraphStats {
 
 	// Cache miss - compute fresh
 	ca.cacheHit = false
-	stats := ca.Analyzer.AnalyzeAsync()
+	stats := ca.Analyzer.AnalyzeAsync(context.Background())
 
 	// Store in cache when Phase 2 completes
 	go func() {

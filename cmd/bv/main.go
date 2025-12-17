@@ -1021,7 +1021,7 @@ func main() {
 		// Build graph and compute stats
 		fmt.Println("  → Running graph analysis...")
 		analyzer := analysis.NewAnalyzer(exportIssues)
-		stats := analyzer.AnalyzeAsync()
+		stats := analyzer.AnalyzeAsync(context.Background())
 		stats.WaitForPhase2()
 
 		// Compute triage
@@ -1800,7 +1800,7 @@ func main() {
 
 		plan := analyzer.GetExecutionPlan()
 
-		stats := analyzer.AnalyzeAsyncWithConfig(cfg)
+		stats := analyzer.AnalyzeAsyncWithConfig(context.Background(), cfg)
 		stats.WaitForPhase2()
 		status := stats.Status()
 
@@ -1847,7 +1847,7 @@ func main() {
 			cfg = analysis.FullAnalysisConfig()
 		}
 		analyzer.SetConfig(&cfg)
-		stats := analyzer.AnalyzeAsyncWithConfig(cfg)
+		stats := analyzer.AnalyzeAsyncWithConfig(context.Background(), cfg)
 		stats.WaitForPhase2()
 		status := stats.Status()
 
@@ -4034,7 +4034,7 @@ func runPagesWizard(issues []model.Issue, beadsPath string) error {
 	// Build graph and compute stats
 	fmt.Println("  -> Running graph analysis...")
 	analyzer := analysis.NewAnalyzer(exportIssues)
-	stats := analyzer.AnalyzeAsync()
+	stats := analyzer.AnalyzeAsync(context.Background())
 	stats.WaitForPhase2()
 
 	// Compute triage

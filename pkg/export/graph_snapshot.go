@@ -177,10 +177,13 @@ func buildLayout(opts GraphSnapshotOptions) layoutResult {
 	for lvl := 1; lvl <= maxLevel; lvl++ {
 		nodes := levelBuckets[lvl]
 		sort.Slice(nodes, func(i, j int) bool {
-			if nodes[i].Rank == nodes[j].Rank {
-				return nodes[i].ID < nodes[j].ID
+			// Use epsilon comparisons to avoid unstable ordering when PageRank is
+			// effectively tied but differs by tiny floating point noise.
+			const eps = 1e-6
+			if diff := nodes[i].Rank - nodes[j].Rank; math.Abs(diff) > eps {
+				return diff > 0
 			}
-			return nodes[i].Rank > nodes[j].Rank
+			return nodes[i].ID < nodes[j].ID
 		})
 		levelBuckets[lvl] = nodes
 	}

@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"context"
 	"sort"
 
 	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
@@ -226,7 +227,7 @@ func (a *Analyzer) GenerateAdvancedInsights(config AdvancedInsightsConfig) *Adva
 
 // generateCycleBreakSuggestions creates cycle break suggestions from existing cycle data.
 func (a *Analyzer) generateCycleBreakSuggestions(limit int) *CycleBreakResult {
-	stats := a.AnalyzeAsync()
+	stats := a.AnalyzeAsync(context.Background())
 	stats.WaitForPhase2()
 	cycles := stats.Cycles()
 
