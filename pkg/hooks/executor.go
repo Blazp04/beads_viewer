@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"sort"
 )
 
 // HookResult contains the result of a hook execution
@@ -113,7 +114,15 @@ func (e *Executor) runHook(hook Hook, phase HookPhase) HookResult {
 	cmd.Env = append(cmd.Env, e.context.ToEnv()...)
 
 	// Add hook-specific env vars (with ${VAR} expansion from current env)
-	for key, value := range hook.Env {
+	// Sort keys for deterministic environment order
+	envKeys := make([]string, 0, len(hook.Env))
+	for k := range hook.Env {
+		envKeys = append(envKeys, k)
+	}
+	sort.Strings(envKeys)
+
+	for _, key := range envKeys {
+		value := hook.Env[key]
 		expandedValue := os.ExpandEnv(value)
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, expandedValue))
 	}
