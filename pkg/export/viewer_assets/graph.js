@@ -2606,24 +2606,9 @@ export function cleanup() {
     store.graph = null;
 }
 
-// Export cycle navigator functions
-export {
-    initCycleNavigator,
-    highlightCycle,
-    nextCycle,
-    prevCycle,
-    zoomToCycle,
-    resetCycleNavigator,
-    toggleCycleNavigator,
-    getCycleNavigatorState
-};
-
-// Export label galaxy functions (bv-qpt0)
-export {
-    toggleLabelLegend,
-    getLabelColor,
-    getPrimaryLabel
-};
+// Note: Cycle navigator functions are already exported at their definitions
+// Label helper functions (not toggleLabelLegend which is already exported)
+export { getLabelColor, getPrimaryLabel };
 
 /**
  * Get label cluster state for external access

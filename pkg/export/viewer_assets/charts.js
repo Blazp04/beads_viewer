@@ -87,6 +87,11 @@ const chartsState = {
  * @param {Array} dependencies - Array of dependency objects
  */
 function initCharts(issues, dependencies) {
+    // Destroy existing charts to prevent "Canvas already in use" errors
+    if (chartsState.initialized) {
+        destroyCharts();
+    }
+
     chartsState.issues = issues || [];
     chartsState.dependencies = dependencies || [];
     chartsState.initialized = true;
