@@ -2,7 +2,6 @@ package cass
 
 import (
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -286,7 +285,6 @@ func TestCache_EvictExpiredFirst(t *testing.T) {
 func TestCache_ConcurrentAccess(t *testing.T) {
 	c := NewCache()
 
-	var failureCount int32
 	var wg sync.WaitGroup
 
 	// Writers
@@ -320,10 +318,7 @@ func TestCache_ConcurrentAccess(t *testing.T) {
 	}
 
 	wg.Wait()
-
-	if failures := atomic.LoadInt32(&failureCount); failures > 0 {
-		t.Errorf("%d goroutines failed", failures)
-	}
+	// Test passes if no panics or race conditions detected by -race flag
 }
 
 func TestCache_ConcurrentSetSameKey(t *testing.T) {

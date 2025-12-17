@@ -128,7 +128,7 @@ func (c *Cache) Get(beadID string) *CorrelationHint {
 
 // Set stores a correlation hint in the cache.
 // If the cache is full, it evicts expired entries first, then LRU.
-// This is an O(1) operation.
+// O(1) when no eviction needed; O(n) worst case when eviction scans for expired entries.
 func (c *Cache) Set(beadID string, hint *CorrelationHint) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
