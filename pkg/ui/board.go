@@ -51,6 +51,11 @@ type BoardModel struct {
 	// true = always show all columns
 	// false = always hide empty columns
 	showEmptyColumns *bool
+
+	// Inline card expansion (bv-i3ii)
+	// expandedCardID tracks which card is currently expanded inline
+	// Empty string means no card is expanded
+	expandedCardID string
 }
 
 // searchMatch holds info about a matching card (bv-yg39)
@@ -448,6 +453,7 @@ func (b *BoardModel) actualFocusedCol() int {
 
 // Navigation methods
 func (b *BoardModel) MoveDown() {
+	b.CollapseExpanded() // Auto-collapse on navigation (bv-i3ii)
 	col := b.actualFocusedCol()
 	count := len(b.columns[col])
 	if count == 0 {
@@ -459,6 +465,7 @@ func (b *BoardModel) MoveDown() {
 }
 
 func (b *BoardModel) MoveUp() {
+	b.CollapseExpanded() // Auto-collapse on navigation (bv-i3ii)
 	col := b.actualFocusedCol()
 	if b.selectedRow[col] > 0 {
 		b.selectedRow[col]--
@@ -466,12 +473,14 @@ func (b *BoardModel) MoveUp() {
 }
 
 func (b *BoardModel) MoveRight() {
+	b.CollapseExpanded() // Auto-collapse on navigation (bv-i3ii)
 	if b.focusedCol < len(b.activeColIdx)-1 {
 		b.focusedCol++
 	}
 }
 
 func (b *BoardModel) MoveLeft() {
+	b.CollapseExpanded() // Auto-collapse on navigation (bv-i3ii)
 	if b.focusedCol > 0 {
 		b.focusedCol--
 	}
@@ -763,6 +772,46 @@ func (b *BoardModel) TotalCount() int {
 	return total
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Inline card expansion (bv-i3ii)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ToggleExpand toggles inline expansion for the selected card
+// If a different card is expanded, it collapses that and expands the new one
+func (b *BoardModel) ToggleExpand() {
+	selected := b.SelectedIssue()
+	if selected == nil {
+		return
+	}
+	if b.expandedCardID == selected.ID {
+		// Collapse if already expanded
+		b.expandedCardID = ""
+	} else {
+		// Expand selected card (auto-collapses previous)
+		b.expandedCardID = selected.ID
+	}
+}
+
+// CollapseExpanded collapses any currently expanded card
+func (b *BoardModel) CollapseExpanded() {
+	b.expandedCardID = ""
+}
+
+// IsCardExpanded returns true if the specified card is currently expanded
+func (b *BoardModel) IsCardExpanded(id string) bool {
+	return b.expandedCardID != "" && b.expandedCardID == id
+}
+
+// GetExpandedID returns the ID of the currently expanded card (empty if none)
+func (b *BoardModel) GetExpandedID() string {
+	return b.expandedCardID
+}
+
+// HasExpandedCard returns true if any card is currently expanded
+func (b *BoardModel) HasExpandedCard() bool {
+	return b.expandedCardID != ""
+}
+
 // View renders the Kanban board with adaptive columns
 func (b BoardModel) View(width, height int) string {
 	t := b.theme
@@ -950,7 +999,13 @@ func (b BoardModel) View(width, height int) string {
 			issue := issues[rowIdx]
 			isSelected := isFocused && rowIdx == sel
 
-			card := b.renderCard(issue, baseWidth-4, isSelected, colIdx, rowIdx)
+			// Check if this card is expanded (bv-i3ii)
+			var card string
+			if b.IsCardExpanded(issue.ID) {
+				card = b.renderExpandedCard(issue, baseWidth-4, colIdx, rowIdx)
+			} else {
+				card = b.renderCard(issue, baseWidth-4, isSelected, colIdx, rowIdx)
+			}
 			cards = append(cards, card)
 		}
 
@@ -1243,6 +1298,170 @@ func (b BoardModel) renderCard(issue model.Issue, width int, selected bool, colI
 	line4 := "" // Placeholder for optional activity bar
 
 	return cardStyle.Render(lipgloss.JoinVertical(lipgloss.Left, line1, line2, line3, line4))
+}
+
+// renderExpandedCard creates an expanded inline view of a card (bv-i3ii)
+// Shows full description, dependencies with titles, and all labels
+func (b BoardModel) renderExpandedCard(issue model.Issue, width int, colIdx, rowIdx int) string {
+	t := b.theme
+
+	// ══════════════════════════════════════════════════════════════════════════
+	// DETERMINE BLOCKING STATUS for color coding (same as renderCard)
+	// ══════════════════════════════════════════════════════════════════════════
+	hasBlockingDeps := false
+	for _, dep := range issue.Dependencies {
+		if dep != nil && dep.Type.IsBlocking() {
+			hasBlockingDeps = true
+			break
+		}
+	}
+	blocksOthers := len(b.blocksIndex[issue.ID]) > 0
+
+	// ══════════════════════════════════════════════════════════════════════════
+	// CARD STYLING - Expanded card is always selected (since we expand selected)
+	// ══════════════════════════════════════════════════════════════════════════
+	cardStyle := t.Renderer.NewStyle().
+		Width(width).
+		Padding(0, 1).
+		MarginBottom(1)
+
+	// Border color based on blocking status
+	var borderColor lipgloss.TerminalColor
+	if hasBlockingDeps {
+		borderColor = lipgloss.AdaptiveColor{Light: "#c62828", Dark: "#ef5350"} // Red - blocked
+	} else if blocksOthers {
+		borderColor = lipgloss.AdaptiveColor{Light: "#f57c00", Dark: "#ffb74d"} // Yellow - high impact
+	} else if issue.Status == model.StatusOpen {
+		borderColor = lipgloss.AdaptiveColor{Light: "#2e7d32", Dark: "#81c784"} // Green - ready
+	} else {
+		borderColor = t.Primary // Selected uses primary
+	}
+
+	cardStyle = cardStyle.
+		Background(t.Highlight).
+		Border(lipgloss.DoubleBorder()). // Double border to distinguish expanded state
+		BorderForeground(borderColor)
+
+	// ══════════════════════════════════════════════════════════════════════════
+	// HEADER: Type icon + Priority + ID + Expand indicator
+	// ══════════════════════════════════════════════════════════════════════════
+	icon, iconColor := t.GetTypeIcon(string(issue.IssueType))
+	prioText := formatPriority(issue.Priority)
+	prioStyle := t.Renderer.NewStyle().Bold(true)
+	if issue.Priority <= 1 {
+		prioStyle = prioStyle.Foreground(lipgloss.AdaptiveColor{Light: "#c62828", Dark: "#ef5350"})
+	} else {
+		prioStyle = prioStyle.Foreground(t.Secondary)
+	}
+
+	header := fmt.Sprintf("%s %s %s ▼",
+		t.Renderer.NewStyle().Foreground(iconColor).Render(icon),
+		prioStyle.Render(prioText),
+		t.Renderer.NewStyle().Bold(true).Foreground(t.Primary).Render(issue.ID),
+	)
+
+	// ══════════════════════════════════════════════════════════════════════════
+	// TITLE: Full title (not truncated)
+	// ══════════════════════════════════════════════════════════════════════════
+	titleStyle := t.Renderer.NewStyle().Foreground(t.Primary).Bold(true)
+	title := titleStyle.Render(issue.Title)
+
+	// ══════════════════════════════════════════════════════════════════════════
+	// SEPARATOR
+	// ══════════════════════════════════════════════════════════════════════════
+	sepStyle := t.Renderer.NewStyle().Foreground(t.Secondary)
+	separator := sepStyle.Render(strings.Repeat("─", width-4))
+
+	// ══════════════════════════════════════════════════════════════════════════
+	// DESCRIPTION: First ~8 lines, rendered with glamour if possible
+	// ══════════════════════════════════════════════════════════════════════════
+	var descLines []string
+	if issue.Description != "" {
+		// Limit description to ~8 lines
+		lines := strings.Split(issue.Description, "\n")
+		maxLines := 8
+		if len(lines) > maxLines {
+			lines = lines[:maxLines]
+			lines = append(lines, "...")
+		}
+		desc := strings.Join(lines, "\n")
+
+		// Render with markdown if possible
+		rendered := desc
+		if b.mdRenderer != nil {
+			if md, err := b.mdRenderer.Render(desc); err == nil {
+				rendered = strings.TrimSpace(md)
+			}
+		}
+		descLines = append(descLines, rendered)
+	}
+
+	// ══════════════════════════════════════════════════════════════════════════
+	// DEPENDENCIES: Show blocking deps with titles
+	// ══════════════════════════════════════════════════════════════════════════
+	var depLines []string
+	var blockingDeps []*model.Dependency
+	for _, dep := range issue.Dependencies {
+		if dep != nil && dep.Type.IsBlocking() {
+			blockingDeps = append(blockingDeps, dep)
+		}
+	}
+	if len(blockingDeps) > 0 {
+		depLines = append(depLines, t.Renderer.NewStyle().Bold(true).Foreground(t.Blocked).Render("Blocked by:"))
+		for _, dep := range blockingDeps {
+			blockerText := fmt.Sprintf("  • %s", dep.DependsOnID)
+			if blocker, ok := b.issueMap[dep.DependsOnID]; ok && blocker != nil {
+				blockerText = fmt.Sprintf("  • %s: %s (%s)", dep.DependsOnID, blocker.Title, blocker.Status)
+			}
+			depLines = append(depLines, t.Renderer.NewStyle().Foreground(t.Blocked).Render(blockerText))
+		}
+	}
+
+	// Show what this blocks
+	if blockedIDs, ok := b.blocksIndex[issue.ID]; ok && len(blockedIDs) > 0 {
+		depLines = append(depLines, t.Renderer.NewStyle().Bold(true).Foreground(t.Feature).Render("Blocks:"))
+		for _, blockedID := range blockedIDs {
+			blockedText := fmt.Sprintf("  • %s", blockedID)
+			if blocked, ok := b.issueMap[blockedID]; ok && blocked != nil {
+				blockedText = fmt.Sprintf("  • %s: %s", blockedID, blocked.Title)
+			}
+			depLines = append(depLines, t.Renderer.NewStyle().Foreground(t.Feature).Render(blockedText))
+		}
+	}
+
+	// ══════════════════════════════════════════════════════════════════════════
+	// LABELS: Full label list
+	// ══════════════════════════════════════════════════════════════════════════
+	var labelLine string
+	if len(issue.Labels) > 0 {
+		labelStyle := t.Renderer.NewStyle().Foreground(t.InProgress)
+		labelLine = labelStyle.Render("🏷 " + strings.Join(issue.Labels, ", "))
+	}
+
+	// ══════════════════════════════════════════════════════════════════════════
+	// TIMESTAMPS
+	// ══════════════════════════════════════════════════════════════════════════
+	timeStyle := t.Renderer.NewStyle().Foreground(t.Secondary).Italic(true)
+	timestamps := timeStyle.Render(fmt.Sprintf("Created: %s | Updated: %s",
+		FormatTimeRel(issue.CreatedAt), FormatTimeRel(issue.UpdatedAt)))
+
+	// ══════════════════════════════════════════════════════════════════════════
+	// ASSEMBLE CARD
+	// ══════════════════════════════════════════════════════════════════════════
+	var parts []string
+	parts = append(parts, header, title, separator)
+	parts = append(parts, descLines...)
+	if len(depLines) > 0 {
+		parts = append(parts, "") // blank line
+		parts = append(parts, depLines...)
+	}
+	if labelLine != "" {
+		parts = append(parts, "") // blank line
+		parts = append(parts, labelLine)
+	}
+	parts = append(parts, separator, timestamps)
+
+	return cardStyle.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
 }
 
 // renderDetailPanel renders the detail panel for the selected issue (bv-r6kh)

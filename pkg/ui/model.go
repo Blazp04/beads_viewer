@@ -2259,6 +2259,16 @@ func (m Model) handleBoardKeys(msg tea.KeyMsg) Model {
 		}
 		m.statusIsError = false
 
+	// Inline card expansion (bv-i3ii)
+	case "d":
+		m.board.ToggleExpand()
+		if m.board.HasExpandedCard() {
+			m.statusMsg = "📋 Card expanded (d=collapse, j/k=auto-collapse)"
+		} else {
+			m.statusMsg = "📋 Card collapsed"
+		}
+		m.statusIsError = false
+
 	// Detail panel (bv-r6kh)
 	case "tab":
 		m.board.ToggleDetail()

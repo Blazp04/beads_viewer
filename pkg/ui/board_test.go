@@ -1610,3 +1610,194 @@ func TestEmptyColumnTitleBarRendering(t *testing.T) {
 		t.Error("Title bar should show swimlane mode")
 	}
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Inline Card Expansion Tests (bv-i3ii)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// TestInlineCardExpansion_Toggle verifies basic expand/collapse behavior
+func TestInlineCardExpansion_Toggle(t *testing.T) {
+	theme := createTheme()
+	issues := []model.Issue{
+		{ID: "test-1", Title: "First Issue", Status: model.StatusOpen},
+		{ID: "test-2", Title: "Second Issue", Status: model.StatusOpen},
+	}
+	b := ui.NewBoardModel(issues, theme)
+
+	// Initially no card is expanded
+	if b.HasExpandedCard() {
+		t.Error("No card should be expanded initially")
+	}
+	if b.GetExpandedID() != "" {
+		t.Error("GetExpandedID should return empty string when no card expanded")
+	}
+
+	// Toggle expand on first card
+	b.ToggleExpand()
+	if !b.HasExpandedCard() {
+		t.Error("Card should be expanded after ToggleExpand")
+	}
+	if b.GetExpandedID() != "test-1" {
+		t.Errorf("Expected expanded card test-1, got %s", b.GetExpandedID())
+	}
+	if !b.IsCardExpanded("test-1") {
+		t.Error("IsCardExpanded should return true for test-1")
+	}
+
+	// Toggle again should collapse
+	b.ToggleExpand()
+	if b.HasExpandedCard() {
+		t.Error("Card should be collapsed after second ToggleExpand")
+	}
+}
+
+// TestInlineCardExpansion_AutoCollapseOnNavigation verifies cards collapse when navigating
+func TestInlineCardExpansion_AutoCollapseOnNavigation(t *testing.T) {
+	theme := createTheme()
+	issues := []model.Issue{
+		{ID: "test-1", Title: "First Issue", Status: model.StatusOpen},
+		{ID: "test-2", Title: "Second Issue", Status: model.StatusOpen},
+		{ID: "test-3", Title: "Third Issue", Status: model.StatusInProgress},
+	}
+	b := ui.NewBoardModel(issues, theme)
+
+	// Expand first card
+	b.ToggleExpand()
+	if !b.IsCardExpanded("test-1") {
+		t.Error("test-1 should be expanded")
+	}
+
+	// Move down should collapse
+	b.MoveDown()
+	if b.HasExpandedCard() {
+		t.Error("Card should collapse on MoveDown")
+	}
+
+	// Expand again and test MoveUp
+	b.ToggleExpand()
+	b.MoveUp()
+	if b.HasExpandedCard() {
+		t.Error("Card should collapse on MoveUp")
+	}
+
+	// Test MoveLeft/MoveRight
+	b.MoveRight() // Move to different column
+	b.ToggleExpand()
+	expandedBefore := b.GetExpandedID()
+	b.MoveLeft()
+	if b.HasExpandedCard() {
+		t.Errorf("Card %s should collapse on MoveLeft", expandedBefore)
+	}
+}
+
+// TestInlineCardExpansion_OnlyOneExpanded verifies only one card can be expanded
+func TestInlineCardExpansion_OnlyOneExpanded(t *testing.T) {
+	theme := createTheme()
+	issues := []model.Issue{
+		{ID: "test-1", Title: "First Issue", Status: model.StatusOpen},
+		{ID: "test-2", Title: "Second Issue", Status: model.StatusOpen},
+	}
+	b := ui.NewBoardModel(issues, theme)
+
+	// Expand first card
+	b.ToggleExpand()
+	if b.GetExpandedID() != "test-1" {
+		t.Error("test-1 should be expanded")
+	}
+
+	// Navigate without MoveUp/MoveDown to keep expansion
+	// Actually, we auto-collapse on navigation, so this test verifies
+	// that expanding a new card replaces the old one
+	b.CollapseExpanded()
+	b.MoveDown() // This will already have collapsed, but let's set up the state
+	b.ToggleExpand()
+
+	// Now test-2 should be expanded (not test-1)
+	if b.GetExpandedID() != "test-2" {
+		t.Errorf("Expected test-2 to be expanded, got %s", b.GetExpandedID())
+	}
+	if b.IsCardExpanded("test-1") {
+		t.Error("test-1 should not be expanded anymore")
+	}
+}
+
+// TestInlineCardExpansion_CollapseMethod verifies CollapseExpanded works
+func TestInlineCardExpansion_CollapseMethod(t *testing.T) {
+	theme := createTheme()
+	issues := []model.Issue{
+		{ID: "test-1", Title: "Test Issue", Status: model.StatusOpen},
+	}
+	b := ui.NewBoardModel(issues, theme)
+
+	// Expand and then explicitly collapse
+	b.ToggleExpand()
+	if !b.HasExpandedCard() {
+		t.Error("Card should be expanded")
+	}
+
+	b.CollapseExpanded()
+	if b.HasExpandedCard() {
+		t.Error("Card should be collapsed after CollapseExpanded")
+	}
+
+	// CollapseExpanded on already collapsed should be safe
+	b.CollapseExpanded()
+	if b.HasExpandedCard() {
+		t.Error("Should still be collapsed")
+	}
+}
+
+// TestInlineCardExpansion_NoIssueSelected verifies ToggleExpand is safe with no selection
+func TestInlineCardExpansion_NoIssueSelected(t *testing.T) {
+	theme := createTheme()
+	issues := []model.Issue{} // Empty board
+	b := ui.NewBoardModel(issues, theme)
+
+	// ToggleExpand should not panic
+	b.ToggleExpand()
+	if b.HasExpandedCard() {
+		t.Error("Should not expand anything when no issues exist")
+	}
+}
+
+// TestInlineCardExpansion_RendersWithDoubleBorder verifies expanded card uses double border
+func TestInlineCardExpansion_RendersWithDoubleBorder(t *testing.T) {
+	theme := createTheme()
+	issues := []model.Issue{
+		{ID: "test-1", Title: "Test Issue", Status: model.StatusOpen, Description: "A test description"},
+	}
+	b := ui.NewBoardModel(issues, theme)
+
+	// Expand the card
+	b.ToggleExpand()
+
+	// Render the board
+	output := b.View(120, 40)
+
+	// Expanded card should show the expand indicator (▼) in header
+	if !strings.Contains(output, "▼") {
+		t.Error("Expanded card should show ▼ indicator")
+	}
+}
+
+// TestInlineCardExpansion_ShowsDescription verifies expanded card shows description
+func TestInlineCardExpansion_ShowsDescription(t *testing.T) {
+	theme := createTheme()
+	// Use text that survives markdown rendering
+	description := "UNIQUE_DESC_CONTENT here."
+	issues := []model.Issue{
+		{ID: "test-1", Title: "Test Issue", Status: model.StatusOpen, Description: description},
+	}
+	b := ui.NewBoardModel(issues, theme)
+
+	// Expand the card
+	b.ToggleExpand()
+
+	// Render the board
+	output := b.View(120, 40)
+
+	// Should contain the unique description text
+	if !strings.Contains(output, "UNIQUE_DESC_CONTENT") {
+		t.Error("Expanded card should show description content")
+	}
+}
