@@ -486,3 +486,36 @@ func TestCassSessionModal_SingleSession(t *testing.T) {
 		t.Errorf("With single session, selection should stay at 0, got %d", modal.selected)
 	}
 }
+
+func TestCassSessionModal_NavigationCappedByMaxDisplay(t *testing.T) {
+	theme := testTheme()
+	// Create 5 sessions but maxDisplay is 3
+	result := cass.CorrelationResult{
+		BeadID: "bv-navbound",
+		TopSessions: []cass.ScoredResult{
+			{SearchResult: cass.SearchResult{Agent: "agent1", Snippet: "One"}},
+			{SearchResult: cass.SearchResult{Agent: "agent2", Snippet: "Two"}},
+			{SearchResult: cass.SearchResult{Agent: "agent3", Snippet: "Three"}},
+			{SearchResult: cass.SearchResult{Agent: "agent4", Snippet: "Four"}},
+			{SearchResult: cass.SearchResult{Agent: "agent5", Snippet: "Five"}},
+		},
+	}
+
+	modal := NewCassSessionModal("bv-navbound", result, theme)
+
+	// Navigation should stop at index 2 (third session), not 4
+	// Move down 5 times
+	for i := 0; i < 5; i++ {
+		modal, _ = modal.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	}
+
+	// Should be capped at maxDisplay-1 (index 2), not len(sessions)-1 (index 4)
+	if modal.selected != 2 {
+		t.Errorf("Navigation should be capped at maxDisplay-1 (2), got %d", modal.selected)
+	}
+
+	// Verify the selected session is the third one (still visible)
+	if modal.selected >= len(modal.sessions) || modal.sessions[modal.selected].Agent != "agent3" {
+		t.Error("Selected session should be the third displayed session (agent3)")
+	}
+}

@@ -53,11 +53,17 @@ func NewCassSessionModal(beadID string, result cass.CorrelationResult, theme The
 
 // Update handles input for the modal.
 func (m CassSessionModal) Update(msg tea.Msg) (CassSessionModal, tea.Cmd) {
+	// Calculate the number of sessions actually displayed (capped by maxDisplay)
+	displayCount := len(m.sessions)
+	if displayCount > m.maxDisplay {
+		displayCount = m.maxDisplay
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "j", "down":
-			if len(m.sessions) > 1 && m.selected < len(m.sessions)-1 {
+			if displayCount > 1 && m.selected < displayCount-1 {
 				m.selected++
 			}
 		case "k", "up":
@@ -79,10 +85,8 @@ func (m CassSessionModal) Update(msg tea.Msg) (CassSessionModal, tea.Cmd) {
 func (m CassSessionModal) View() string {
 	r := m.theme.Renderer
 
-	// Clear copy flash after 2 seconds
-	if m.copied && time.Since(m.copiedAt) > 2*time.Second {
-		m.copied = false
-	}
+	// Check if copy flash should be shown (within 2 seconds of copy)
+	showCopied := m.copied && time.Since(m.copiedAt) <= 2*time.Second
 
 	// Modal container style
 	modalStyle := r.NewStyle().
@@ -194,7 +198,7 @@ func (m CassSessionModal) View() string {
 
 	// Footer with keybindings
 	footerText := "[j/k] Navigate    [y] Copy search cmd    [V/Esc] Close"
-	if m.copied {
+	if showCopied {
 		footerText = "[j/k] Navigate    ✓ Copied!              [V/Esc] Close"
 	}
 	b.WriteString(footerStyle.Render(footerText))
