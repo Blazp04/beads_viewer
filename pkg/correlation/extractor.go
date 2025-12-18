@@ -111,15 +111,11 @@ func (e *Extractor) Extract(opts ExtractOptions) ([]BeadEvent, error) {
 	}
 
 	if err := cmd.Wait(); err != nil {
-		// If git log failed (non-zero exit), prefer that error unless we have a parsing error
+		// If git log failed (non-zero exit), prefer that error
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return nil, fmt.Errorf("git log failed: %s", string(exitErr.Stderr))
 		}
 		return nil, fmt.Errorf("git log failed: %w", err)
-	}
-
-	if parseErr != nil {
-		return nil, fmt.Errorf("parsing git log output: %w", parseErr)
 	}
 
 	// Sort chronologically (git log returns newest first)
