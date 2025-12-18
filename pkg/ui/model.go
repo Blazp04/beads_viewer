@@ -14,6 +14,7 @@ import (
 	"github.com/Dicklesworthstone/beads_viewer/pkg/agents"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/analysis"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/baseline"
+	"github.com/Dicklesworthstone/beads_viewer/pkg/cass"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/correlation"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/drift"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/export"
@@ -61,6 +62,7 @@ const (
 	focusAgentPrompt // AGENTS.md integration prompt (bv-i8dk)
 	focusFlowMatrix  // Cross-label flow matrix view
 	focusTutorial    // Interactive tutorial (bv-8y31)
+	focusCassModal   // Cass session preview modal (bv-5bqh)
 )
 
 // SortMode represents the current list sorting mode (bv-3ita)
@@ -382,6 +384,11 @@ type Model struct {
 	// Tutorial integration (bv-8y31)
 	showTutorial  bool
 	tutorialModel TutorialModel
+
+	// Cass session preview modal (bv-5bqh)
+	showCassModal bool
+	cassModal     CassSessionModal
+	cassCorrelator *cass.Correlator
 }
 
 // labelCount is a simple label->count pair for display
@@ -1217,6 +1224,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				_ = agents.RecordDecline(m.workDir, true)
 				m.showAgentPrompt = false
 				m.focused = focusList
+			}
+			return m, tea.Batch(cmds...)
+		}
+
+		// Handle cass session modal (bv-5bqh)
+		if m.showCassModal {
+			m.cassModal, cmd = m.cassModal.Update(msg)
+			cmds = append(cmds, cmd)
+
+			// Check for dismiss keys
+			switch msg.String() {
+			case "V", "esc", "enter", "q":
+				m.showCassModal = false
+				m.focused = focusList
+				return m, tea.Batch(cmds...)
 			}
 			return m, tea.Batch(cmds...)
 		}
@@ -2201,6 +2223,23 @@ func (m Model) handleBoardKeys(msg tea.KeyMsg) Model {
 			}
 		}
 
+	// Global filter keys (bv-naov) - consistent with list view
+	case "o":
+		m.currentFilter = "open"
+		m.applyFilter()
+		m.statusMsg = "Filter: Open issues"
+		m.statusIsError = false
+	case "c":
+		m.currentFilter = "closed"
+		m.applyFilter()
+		m.statusMsg = "Filter: Closed issues"
+		m.statusIsError = false
+	case "r":
+		m.currentFilter = "ready"
+		m.applyFilter()
+		m.statusMsg = "Filter: Ready (no blockers)"
+		m.statusIsError = false
+
 	// Detail panel (bv-r6kh)
 	case "tab":
 		m.board.ToggleDetail()
@@ -2558,7 +2597,13 @@ func gitRemoteToWebURL(remote string) string {
 }
 
 // openBrowserURL opens a URL in the default browser (bv-xf4p)
+// Set BV_NO_BROWSER=1 to suppress browser opening (useful for tests).
 func openBrowserURL(url string) error {
+	// Skip browser opening in test mode or when explicitly disabled
+	if os.Getenv("BV_NO_BROWSER") != "" || os.Getenv("BV_TEST_MODE") != "" {
+		return nil
+	}
+
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
@@ -2844,6 +2889,9 @@ func (m Model) handleListKeys(msg tea.KeyMsg) Model {
 	case "s":
 		// Cycle sort mode (bv-3ita)
 		m.cycleSortMode()
+	case "V":
+		// Show cass session preview modal (bv-5bqh)
+		m.showCassSessionModal()
 	}
 	return m
 }
@@ -2927,6 +2975,9 @@ func (m Model) View() string {
 	} else if m.showAgentPrompt {
 		// AGENTS.md prompt modal (bv-i8dk)
 		body = m.agentPromptModal.CenterModal(m.width, m.height-1)
+	} else if m.showCassModal {
+		// Cass session preview modal (bv-5bqh)
+		body = m.cassModal.CenterModal(m.width, m.height-1)
 	} else if m.showLabelHealthDetail && m.labelHealthDetail != nil {
 		body = m.renderLabelHealthDetail(*m.labelHealthDetail)
 	} else if m.showLabelGraphAnalysis && m.labelGraphAnalysisResult != nil {
@@ -3961,7 +4012,7 @@ func (m *Model) renderFooter() string {
 		Padding(0, 1).
 		Render("L:labels • h:detail")
 
-	// Board-specific hints (bv-yg39)
+	// Board-specific hints (bv-yg39, bv-naov)
 	if m.isBoardView {
 		if m.board.IsSearchMode() {
 			// Search mode active - show search hints
@@ -3975,12 +4026,18 @@ func (m *Model) renderFooter() string {
 				Padding(0, 1).
 				Render(fmt.Sprintf("/%s%s • n/N:match • enter:done • esc:cancel", m.board.SearchQuery(), matchInfo))
 		} else {
-			// Normal board mode - show navigation hints
+			// Normal board mode - show navigation hints with filter indicator (bv-naov)
+			filterInfo := ""
+			if m.currentFilter != "all" && m.currentFilter != "" {
+				shown := m.board.TotalCount()
+				total := len(m.issues)
+				filterInfo = fmt.Sprintf("[%s:%d/%d] ", m.currentFilter, shown, total)
+			}
 			labelHint = lipgloss.NewStyle().
 				Foreground(ColorMuted).
 				Background(ColorBgDark).
 				Padding(0, 1).
-				Render("1-4:col • /:search • y:copy • tab:detail • ?:help")
+				Render(fmt.Sprintf("%s1-4:col • o/c/r:filter • L:labels • /:search • ?:help", filterInfo))
 		}
 	} else if m.showAttentionView {
 		labelHint = lipgloss.NewStyle().
@@ -5187,6 +5244,54 @@ func (m *Model) copyIssueToClipboard() {
 
 	m.statusMsg = fmt.Sprintf("📋 Copied %s to clipboard", issue.ID)
 	m.statusIsError = false
+}
+
+// showCassSessionModal shows the cass session preview modal for the selected issue (bv-5bqh)
+func (m *Model) showCassSessionModal() {
+	// Get the currently selected issue
+	selectedItem := m.list.SelectedItem()
+	if selectedItem == nil {
+		return
+	}
+
+	issueItem, ok := selectedItem.(IssueItem)
+	if !ok {
+		return
+	}
+	issue := issueItem.Issue
+
+	// Check if cass is available
+	if m.cassCorrelator == nil {
+		// Initialize correlator lazily
+		detector := cass.NewDetector()
+		if detector.Check() != cass.StatusHealthy {
+			m.statusMsg = "⚠️ cass not available (install it for session correlation)"
+			m.statusIsError = false
+			return
+		}
+		searcher := cass.NewSearcher(detector)
+		cache := cass.NewCache()
+		m.cassCorrelator = cass.NewCorrelator(searcher, cache, m.workDir)
+	}
+
+	// Run correlation
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	result := m.cassCorrelator.Correlate(ctx, &issue)
+
+	// If no sessions found, just show a status message
+	if len(result.TopSessions) == 0 {
+		m.statusMsg = "No correlated sessions found for " + issue.ID
+		m.statusIsError = false
+		return
+	}
+
+	// Create and show the modal
+	m.cassModal = NewCassSessionModal(issue.ID, result, m.theme)
+	m.cassModal.SetSize(m.width, m.height)
+	m.showCassModal = true
+	m.focused = focusCassModal
 }
 
 // openInEditor opens the beads file in the user's preferred editor
