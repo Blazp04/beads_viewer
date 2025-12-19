@@ -12,9 +12,9 @@ import (
 
 func TestIssueDocument(t *testing.T) {
 	tests := []struct {
-		name        string
-		issue       model.Issue
-		expected    string
+		name     string
+		issue    model.Issue
+		expected string
 	}{
 		{
 			name: "title and description",
@@ -22,7 +22,7 @@ func TestIssueDocument(t *testing.T) {
 				Title:       "Fix login bug",
 				Description: "Users cannot log in on mobile",
 			},
-			expected: "Fix login bug\nUsers cannot log in on mobile",
+			expected: "Fix login bug\nFix login bug\nUsers cannot log in on mobile",
 		},
 		{
 			name: "title only",
@@ -30,7 +30,7 @@ func TestIssueDocument(t *testing.T) {
 				Title:       "Add dark mode",
 				Description: "",
 			},
-			expected: "Add dark mode",
+			expected: "Add dark mode\nAdd dark mode",
 		},
 		{
 			name: "description only",
@@ -54,7 +54,7 @@ func TestIssueDocument(t *testing.T) {
 				Title:       "  Trimmed title  ",
 				Description: "Some description",
 			},
-			expected: "Trimmed title\nSome description",
+			expected: "Trimmed title\nTrimmed title\nSome description",
 		},
 		{
 			name: "description with whitespace",
@@ -62,7 +62,7 @@ func TestIssueDocument(t *testing.T) {
 				Title:       "Some title",
 				Description: "  Trimmed description  ",
 			},
-			expected: "Some title\nTrimmed description",
+			expected: "Some title\nSome title\nTrimmed description",
 		},
 		{
 			name: "both have whitespace",
@@ -70,7 +70,7 @@ func TestIssueDocument(t *testing.T) {
 				Title:       "  Title  ",
 				Description: "  Description  ",
 			},
-			expected: "Title\nDescription",
+			expected: "Title\nTitle\nDescription",
 		},
 		{
 			name: "whitespace-only title treated as empty",
@@ -86,7 +86,7 @@ func TestIssueDocument(t *testing.T) {
 				Title:       "Actual title",
 				Description: "   ",
 			},
-			expected: "Actual title",
+			expected: "Actual title\nActual title",
 		},
 		{
 			name: "multiline description",
@@ -96,7 +96,7 @@ func TestIssueDocument(t *testing.T) {
 Line 2
 Line 3`,
 			},
-			expected: "Feature request\nLine 1\nLine 2\nLine 3",
+			expected: "Feature request\nFeature request\nLine 1\nLine 2\nLine 3",
 		},
 		{
 			name: "unicode content",
@@ -104,7 +104,7 @@ Line 3`,
 				Title:       "日本語タイトル",
 				Description: "Description in English",
 			},
-			expected: "日本語タイトル\nDescription in English",
+			expected: "日本語タイトル\n日本語タイトル\nDescription in English",
 		},
 		{
 			name: "newlines in title preserved",
@@ -112,7 +112,17 @@ Line 3`,
 				Title:       "Title\nwith\nnewlines",
 				Description: "Desc",
 			},
-			expected: "Title\nwith\nnewlines\nDesc",
+			expected: "Title\nwith\nnewlines\nTitle\nwith\nnewlines\nDesc",
+		},
+		{
+			name: "id and labels included",
+			issue: model.Issue{
+				ID:          "bv-123",
+				Title:       "Search boost",
+				Description: "Labels should be included",
+				Labels:      []string{"search", "hybrid"},
+			},
+			expected: "bv-123\nbv-123\nbv-123\nSearch boost\nSearch boost\nsearch hybrid\nLabels should be included",
 		},
 	}
 
@@ -152,7 +162,7 @@ func TestDocumentsFromIssues(t *testing.T) {
 				{ID: "issue-1", Title: "Bug fix", Description: "Fix the bug"},
 			},
 			expected: map[string]string{
-				"issue-1": "Bug fix\nFix the bug",
+				"issue-1": "issue-1\nissue-1\nissue-1\nBug fix\nBug fix\nFix the bug",
 			},
 		},
 		{
@@ -163,9 +173,9 @@ func TestDocumentsFromIssues(t *testing.T) {
 				{ID: "issue-3", Title: "Bug 3", Description: "Desc 3"},
 			},
 			expected: map[string]string{
-				"issue-1": "Bug 1\nDesc 1",
-				"issue-2": "Bug 2\nDesc 2",
-				"issue-3": "Bug 3\nDesc 3",
+				"issue-1": "issue-1\nissue-1\nissue-1\nBug 1\nBug 1\nDesc 1",
+				"issue-2": "issue-2\nissue-2\nissue-2\nBug 2\nBug 2\nDesc 2",
+				"issue-3": "issue-3\nissue-3\nissue-3\nBug 3\nBug 3\nDesc 3",
 			},
 		},
 		{
@@ -176,8 +186,8 @@ func TestDocumentsFromIssues(t *testing.T) {
 				{ID: "issue-2", Title: "Valid 2", Description: "Valid desc 2"},
 			},
 			expected: map[string]string{
-				"issue-1": "Valid\nValid desc",
-				"issue-2": "Valid 2\nValid desc 2",
+				"issue-1": "issue-1\nissue-1\nissue-1\nValid\nValid\nValid desc",
+				"issue-2": "issue-2\nissue-2\nissue-2\nValid 2\nValid 2\nValid desc 2",
 			},
 		},
 		{
@@ -195,7 +205,7 @@ func TestDocumentsFromIssues(t *testing.T) {
 				{ID: "dupe", Title: "Second", Description: "Second desc"},
 			},
 			expected: map[string]string{
-				"dupe": "Second\nSecond desc",
+				"dupe": "dupe\ndupe\ndupe\nSecond\nSecond\nSecond desc",
 			},
 		},
 		{
@@ -204,7 +214,7 @@ func TestDocumentsFromIssues(t *testing.T) {
 				{ID: "title-only", Title: "Just a title", Description: ""},
 			},
 			expected: map[string]string{
-				"title-only": "Just a title",
+				"title-only": "title-only\ntitle-only\ntitle-only\nJust a title\nJust a title",
 			},
 		},
 		{
@@ -213,7 +223,7 @@ func TestDocumentsFromIssues(t *testing.T) {
 				{ID: "desc-only", Title: "", Description: "Just a description"},
 			},
 			expected: map[string]string{
-				"desc-only": "Just a description",
+				"desc-only": "desc-only\ndesc-only\ndesc-only\nJust a description",
 			},
 		},
 		{
@@ -222,7 +232,7 @@ func TestDocumentsFromIssues(t *testing.T) {
 				{ID: "empty-content", Title: "", Description: ""},
 			},
 			expected: map[string]string{
-				"empty-content": "",
+				"empty-content": "empty-content\nempty-content\nempty-content",
 			},
 		},
 		{
@@ -234,10 +244,10 @@ func TestDocumentsFromIssues(t *testing.T) {
 				{ID: "empty", Title: "", Description: ""},
 			},
 			expected: map[string]string{
-				"full":       "Full title\nFull description",
-				"title-only": "Title only",
-				"desc-only":  "Description only",
-				"empty":      "",
+				"full":       "full\nfull\nfull\nFull title\nFull title\nFull description",
+				"title-only": "title-only\ntitle-only\ntitle-only\nTitle only\nTitle only",
+				"desc-only":  "desc-only\ndesc-only\ndesc-only\nDescription only",
+				"empty":      "empty\nempty\nempty",
 			},
 		},
 	}
@@ -309,7 +319,7 @@ func TestIssueDocument_PreservesContent(t *testing.T) {
 	}
 
 	result := IssueDocument(issue)
-	expected := "Special chars: <>&\"'\nCode: `fmt.Println()` and more"
+	expected := "Special chars: <>&\"'\nSpecial chars: <>&\"'\nCode: `fmt.Println()` and more"
 
 	if result != expected {
 		t.Errorf("Content not preserved correctly:\ngot: %q\nwant: %q", result, expected)

@@ -90,6 +90,9 @@ func main() {
 	semanticQuery := flag.String("search", "", "Semantic search query (vector-based; builds/updates index on first run)")
 	robotSearch := flag.Bool("robot-search", false, "Output semantic search results as JSON for AI agents (use with --search)")
 	searchLimit := flag.Int("search-limit", 10, "Max results for --search/--robot-search")
+	searchMode := flag.String("search-mode", "", "Search ranking mode: text or hybrid (default: BV_SEARCH_MODE or text)")
+	searchPreset := flag.String("search-preset", "", "Hybrid preset name (default: BV_SEARCH_PRESET or default)")
+	searchWeights := flag.String("search-weights", "", "Hybrid weights JSON (overrides preset; keys: text,pagerank,status,impact,priority,recency)")
 	diffSince := flag.String("diff-since", "", "Show changes since historical point (commit SHA, branch, tag, or date)")
 	asOf := flag.String("as-of", "", "View state at point in time (commit SHA, branch, tag, or date)")
 	forceFullAnalysis := flag.Bool("force-full-analysis", false, "Compute all metrics regardless of graph size (may be slow for large graphs)")
@@ -315,6 +318,10 @@ func main() {
 		fmt.Println("      Semantic vector search over issue titles/descriptions.")
 		fmt.Println("      Builds/updates a local on-disk vector index on first run.")
 		fmt.Println("      Use --robot-search to emit JSON for automation.")
+		fmt.Println("      Optional hybrid re-ranking:")
+		fmt.Println("      - --search-mode=text|hybrid (default: BV_SEARCH_MODE or text)")
+		fmt.Println("      - --search-preset=default|bug-hunting|sprint-planning|impact-first|text-only")
+		fmt.Println("      - --search-weights='{\"text\":0.4,\"pagerank\":0.2,\"status\":0.15,\"impact\":0.1,\"priority\":0.1,\"recency\":0.05}'")
 		fmt.Println("")
 		fmt.Println("  --emit-script [--script-limit=N]")
 		fmt.Println("      Emits a shell script for top-N recommendations (default: 5).")
@@ -1063,8 +1070,19 @@ func main() {
 		os.Exit(1)
 	}
 	if *semanticQuery != "" {
-		cfg := search.EmbeddingConfigFromEnv()
-		embedder, err := search.NewEmbedderFromConfig(cfg)
+		embedCfg := search.EmbeddingConfigFromEnv()
+		searchCfg, err := search.SearchConfigFromEnv()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		searchCfg, err = applySearchConfigOverrides(searchCfg, *searchMode, *searchPreset, *searchWeights)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		embedder, err := search.NewEmbedderFromConfig(embedCfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -1075,7 +1093,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		indexPath := search.DefaultIndexPath(projectDir, cfg)
+		indexPath := search.DefaultIndexPath(projectDir, embedCfg)
 		idx, loaded, err := search.LoadOrNewVectorIndex(indexPath, embedder.Dim())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -1115,10 +1133,18 @@ func main() {
 		if limit <= 0 {
 			limit = 10
 		}
-		results, err := idx.SearchTopK(qvecs[0], limit)
+		fetchLimit := limit
+		if searchCfg.Mode == search.SearchModeHybrid {
+			fetchLimit = search.HybridCandidateLimit(limit, len(issuesForSearch), *semanticQuery)
+		}
+		results, err := idx.SearchTopK(qvecs[0], fetchLimit)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error searching index: %v\n", err)
 			os.Exit(1)
+		}
+		results = search.ApplyShortQueryLexicalBoost(results, *semanticQuery, docs)
+		if isLikelyIssueID(*semanticQuery) {
+			results = promoteExactSearchResult(*semanticQuery, results)
 		}
 
 		titleByID := make(map[string]string, len(issuesForSearch))
@@ -1126,53 +1152,89 @@ func main() {
 			titleByID[iss.ID] = iss.Title
 		}
 
-		if *robotSearch {
-			type resultRow struct {
-				IssueID string  `json:"issue_id"`
-				Score   float64 `json:"score"`
-				Title   string  `json:"title,omitempty"`
+		var hybridResults []search.HybridScore
+		var resolvedPreset search.PresetName
+		var resolvedWeights *search.Weights
+		if searchCfg.Mode == search.SearchModeHybrid {
+			weights, presetName, err := resolveSearchWeights(searchCfg)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
 			}
-			out := struct {
-				GeneratedAt string                `json:"generated_at"`
-				DataHash    string                `json:"data_hash"`
-				Query       string                `json:"query"`
-				Provider    search.Provider       `json:"provider"`
-				Model       string                `json:"model,omitempty"`
-				Dim         int                   `json:"dim"`
-				IndexPath   string                `json:"index_path"`
-				Index       search.IndexSyncStats `json:"index"`
-				Loaded      bool                  `json:"loaded"`
-				Limit       int                   `json:"limit"`
-				Results     []resultRow           `json:"results"`
-				UsageHints  []string              `json:"usage_hints"`
-			}{
+			weights = weights.Normalize()
+			weights = search.AdjustWeightsForQuery(weights, *semanticQuery)
+			resolvedPreset = presetName
+			resolvedWeights = &weights
+
+			cache := search.NewMetricsCache(search.NewAnalyzerMetricsLoader(issuesForSearch))
+			if err := cache.Refresh(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error computing hybrid metrics: %v\n", err)
+				os.Exit(1)
+			}
+
+			scorer := search.NewHybridScorer(weights, cache)
+			hybridResults, err = buildHybridScores(results, scorer)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error scoring hybrid results: %v\n", err)
+				os.Exit(1)
+			}
+			if isLikelyIssueID(*semanticQuery) {
+				hybridResults = promoteExactHybridResult(*semanticQuery, hybridResults)
+			}
+			if len(hybridResults) > limit {
+				hybridResults = hybridResults[:limit]
+			}
+		}
+
+		if *robotSearch {
+			out := robotSearchOutput{
 				GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 				DataHash:    dataHash,
 				Query:       *semanticQuery,
-				Provider:    cfg.Provider,
-				Model:       cfg.Model,
+				Provider:    embedCfg.Provider,
+				Model:       embedCfg.Model,
 				Dim:         embedder.Dim(),
 				IndexPath:   indexPath,
 				Index:       syncStats,
 				Loaded:      loaded,
 				Limit:       limit,
-				UsageHints: []string{
+				Mode:        searchCfg.Mode,
+			}
+			if searchCfg.Mode == search.SearchModeHybrid {
+				out.Preset = resolvedPreset
+				out.Weights = resolvedWeights
+			}
+			out.Results = make([]robotSearchResult, 0, max(len(results), len(hybridResults)))
+			if searchCfg.Mode == search.SearchModeHybrid {
+				for _, r := range hybridResults {
+					out.Results = append(out.Results, robotSearchResult{
+						IssueID:         r.IssueID,
+						Score:           r.FinalScore,
+						TextScore:       r.TextScore,
+						Title:           titleByID[r.IssueID],
+						ComponentScores: r.ComponentScores,
+					})
+				}
+				out.UsageHints = []string{
+					"jq '.results[] | {id: .issue_id, score: .score, text: .text_score}' - Extract scores",
+					"jq '.results[] | {id: .issue_id, components: .component_scores}' - Hybrid breakdown",
+					"jq '.index' - Index update stats (added/updated/removed/embedded)",
+				}
+			} else {
+				for _, r := range results {
+					out.Results = append(out.Results, robotSearchResult{
+						IssueID: r.IssueID,
+						Score:   r.Score,
+						Title:   titleByID[r.IssueID],
+					})
+				}
+				out.UsageHints = []string{
 					"jq '.results[] | {id: .issue_id, score: .score, title: .title}' - Extract results",
 					"jq '.index' - Index update stats (added/updated/removed/embedded)",
-				},
-			}
-			out.Results = make([]resultRow, 0, len(results))
-			for _, r := range results {
-				out.Results = append(out.Results, resultRow{
-					IssueID: r.IssueID,
-					Score:   r.Score,
-					Title:   titleByID[r.IssueID],
-				})
+				}
 			}
 
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			if err := enc.Encode(out); err != nil {
+			if err := writeRobotSearchOutput(os.Stdout, out); err != nil {
 				fmt.Fprintf(os.Stderr, "Error encoding robot-search: %v\n", err)
 				os.Exit(1)
 			}
@@ -1183,8 +1245,14 @@ func main() {
 		if !loaded || syncStats.Changed() {
 			fmt.Fprintf(os.Stderr, "Index: +%d ~%d -%d (%d total) → %s\n", syncStats.Added, syncStats.Updated, syncStats.Removed, idx.Size(), indexPath)
 		}
-		for _, r := range results {
-			fmt.Printf("%.4f\t%s\t%s\n", r.Score, r.IssueID, titleByID[r.IssueID])
+		if searchCfg.Mode == search.SearchModeHybrid {
+			for _, r := range hybridResults {
+				fmt.Printf("%.4f\t%s\t%s\n", r.FinalScore, r.IssueID, titleByID[r.IssueID])
+			}
+		} else {
+			for _, r := range results {
+				fmt.Printf("%.4f\t%s\t%s\n", r.Score, r.IssueID, titleByID[r.IssueID])
+			}
 		}
 		os.Exit(0)
 	}
@@ -3104,10 +3172,10 @@ func main() {
 		if *fileHotspots {
 			// Output hotspots
 			type HotspotsOutput struct {
-				GeneratedAt time.Time                   `json:"generated_at"`
-				DataHash    string                      `json:"data_hash"`
-				Hotspots    []correlation.FileHotspot   `json:"hotspots"`
-				Stats       correlation.FileIndexStats  `json:"stats"`
+				GeneratedAt time.Time                  `json:"generated_at"`
+				DataHash    string                     `json:"data_hash"`
+				Hotspots    []correlation.FileHotspot  `json:"hotspots"`
+				Stats       correlation.FileIndexStats `json:"stats"`
 			}
 
 			hotspots := fileLookup.GetHotspots(*hotspotsLimit)
@@ -3132,12 +3200,12 @@ func main() {
 			}
 
 			type FileBeadsOutput struct {
-				GeneratedAt time.Time                      `json:"generated_at"`
-				DataHash    string                         `json:"data_hash"`
-				FilePath    string                         `json:"file_path"`
-				TotalBeads  int                            `json:"total_beads"`
-				OpenBeads   []correlation.BeadReference    `json:"open_beads"`
-				ClosedBeads []correlation.BeadReference    `json:"closed_beads"`
+				GeneratedAt time.Time                   `json:"generated_at"`
+				DataHash    string                      `json:"data_hash"`
+				FilePath    string                      `json:"file_path"`
+				TotalBeads  int                         `json:"total_beads"`
+				OpenBeads   []correlation.BeadReference `json:"open_beads"`
+				ClosedBeads []correlation.BeadReference `json:"closed_beads"`
 			}
 
 			output := FileBeadsOutput{
@@ -5037,6 +5105,10 @@ func copyViewerAssets(outputDir, title string) error {
 		return fmt.Errorf("viewer assets not found")
 	}
 
+	if err := maybeBuildHybridWasmAssets(assetsDir); err != nil {
+		return err
+	}
+
 	// Files to copy
 	files := []string{
 		"index.html",
@@ -5044,6 +5116,8 @@ func copyViewerAssets(outputDir, title string) error {
 		"styles.css",
 		"graph.js",
 		"charts.js",
+		"hybrid_scorer.js",
+		"wasm_loader.js",
 		"coi-serviceworker.js",
 	}
 
@@ -5077,6 +5151,42 @@ func copyViewerAssets(outputDir, title string) error {
 		}
 	}
 
+	// Copy optional WASM directory
+	wasmSrc := filepath.Join(assetsDir, "wasm")
+	wasmDst := filepath.Join(outputDir, "wasm")
+	if err := copyDir(wasmSrc, wasmDst); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("copy wasm: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func maybeBuildHybridWasmAssets(assetsDir string) error {
+	if os.Getenv("BV_BUILD_HYBRID_WASM") == "" {
+		return nil
+	}
+
+	wasmPackPath, err := exec.LookPath("wasm-pack")
+	if err != nil {
+		return fmt.Errorf("BV_BUILD_HYBRID_WASM is set but wasm-pack was not found in PATH")
+	}
+
+	wasmSrc := filepath.Join(assetsDir, "..", "wasm_scorer")
+	info, err := os.Stat(wasmSrc)
+	if err != nil || !info.IsDir() {
+		return fmt.Errorf("hybrid wasm source directory not found at %s", wasmSrc)
+	}
+
+	outDir := filepath.Join(assetsDir, "wasm")
+	cmd := exec.Command(wasmPackPath, "build", "--release", "--target", "web", "--out-dir", outDir)
+	cmd.Dir = wasmSrc
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("build hybrid wasm: %w", err)
+	}
 	return nil
 }
 

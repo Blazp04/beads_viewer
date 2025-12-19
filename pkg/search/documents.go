@@ -7,17 +7,31 @@ import (
 )
 
 // IssueDocument returns the default text representation used for semantic indexing.
-// For bv-9gf.3 we intentionally keep this minimal (title + description) for predictability.
+// We boost important fields by repeating them: ID (x3), title (x2), labels (x1), description (x1).
 func IssueDocument(issue model.Issue) string {
+	var parts []string
+
+	id := strings.TrimSpace(issue.ID)
+	if id != "" {
+		parts = append(parts, id, id, id)
+	}
+
 	title := strings.TrimSpace(issue.Title)
+	if title != "" {
+		parts = append(parts, title, title)
+	}
+
+	labels := strings.TrimSpace(strings.Join(issue.Labels, " "))
+	if labels != "" {
+		parts = append(parts, labels)
+	}
+
 	desc := strings.TrimSpace(issue.Description)
-	if title == "" {
-		return desc
+	if desc != "" {
+		parts = append(parts, desc)
 	}
-	if desc == "" {
-		return title
-	}
-	return title + "\n" + desc
+
+	return strings.Join(parts, "\n")
 }
 
 // DocumentsFromIssues builds an ID->document map suitable for indexing.

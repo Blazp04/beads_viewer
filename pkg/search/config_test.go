@@ -176,6 +176,118 @@ func TestEmbeddingConfigFromEnv(t *testing.T) {
 }
 
 // =============================================================================
+// SearchConfigFromEnv Tests
+// =============================================================================
+
+func TestSearchConfigFromEnv_Defaults(t *testing.T) {
+	restore := saveSearchEnv()
+	t.Cleanup(restore)
+
+	os.Unsetenv(EnvSearchMode)
+	os.Unsetenv(EnvSearchPreset)
+	os.Unsetenv(EnvSearchWeights)
+
+	cfg, err := SearchConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Mode != SearchModeText {
+		t.Fatalf("expected default mode text, got %q", cfg.Mode)
+	}
+	if cfg.Preset != PresetDefault {
+		t.Fatalf("expected default preset %q, got %q", PresetDefault, cfg.Preset)
+	}
+	if cfg.HasWeights {
+		t.Fatalf("expected no custom weights by default")
+	}
+}
+
+func TestSearchConfigFromEnv_Overrides(t *testing.T) {
+	restore := saveSearchEnv()
+	t.Cleanup(restore)
+
+	os.Setenv(EnvSearchMode, "hybrid")
+	os.Setenv(EnvSearchPreset, "impact-first")
+	os.Setenv(EnvSearchWeights, `{"text":0.5,"pagerank":0.2,"status":0.1,"impact":0.1,"priority":0.05,"recency":0.05}`)
+
+	cfg, err := SearchConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Mode != SearchModeHybrid {
+		t.Fatalf("expected mode hybrid, got %q", cfg.Mode)
+	}
+	if cfg.Preset != PresetImpactFirst {
+		t.Fatalf("expected preset %q, got %q", PresetImpactFirst, cfg.Preset)
+	}
+	if !cfg.HasWeights {
+		t.Fatalf("expected HasWeights true")
+	}
+	if cfg.Weights.TextRelevance != 0.5 {
+		t.Fatalf("expected text weight 0.5, got %f", cfg.Weights.TextRelevance)
+	}
+}
+
+func TestSearchConfigFromEnv_InvalidMode(t *testing.T) {
+	restore := saveSearchEnv()
+	t.Cleanup(restore)
+
+	os.Setenv(EnvSearchMode, "bogus")
+	_, err := SearchConfigFromEnv()
+	if err == nil {
+		t.Fatalf("expected error for invalid mode")
+	}
+}
+
+func TestSearchConfigFromEnv_InvalidPreset(t *testing.T) {
+	restore := saveSearchEnv()
+	t.Cleanup(restore)
+
+	os.Setenv(EnvSearchPreset, "not-a-preset")
+	_, err := SearchConfigFromEnv()
+	if err == nil {
+		t.Fatalf("expected error for invalid preset")
+	}
+}
+
+func TestParseWeightsJSON(t *testing.T) {
+	valid := `{"text":0.4,"pagerank":0.2,"status":0.15,"impact":0.1,"priority":0.1,"recency":0.05}`
+	weights, err := ParseWeightsJSON(valid)
+	if err != nil {
+		t.Fatalf("unexpected error parsing valid JSON: %v", err)
+	}
+	if weights.PageRank != 0.2 {
+		t.Fatalf("expected PageRank 0.2, got %f", weights.PageRank)
+	}
+
+	_, err = ParseWeightsJSON(`{"text":1}`)
+	if err == nil {
+		t.Fatalf("expected error for missing keys")
+	}
+
+	_, err = ParseWeightsJSON(`{"text":0.5,"pagerank":0.2,"status":0.1,"impact":0.1,"priority":0.05,"recency":0.05,"extra":0.0}`)
+	if err == nil {
+		t.Fatalf("expected error for unknown key")
+	}
+
+	_, err = ParseWeightsJSON("{")
+	if err == nil {
+		t.Fatalf("expected error for invalid JSON")
+	}
+}
+
+func saveSearchEnv() func() {
+	mode := os.Getenv(EnvSearchMode)
+	preset := os.Getenv(EnvSearchPreset)
+	weights := os.Getenv(EnvSearchWeights)
+	return func() {
+		os.Setenv(EnvSearchMode, mode)
+		os.Setenv(EnvSearchPreset, preset)
+		os.Setenv(EnvSearchWeights, weights)
+	}
+}
+
+// =============================================================================
 // NewEmbedderFromConfig Tests
 // =============================================================================
 
@@ -357,6 +469,15 @@ func TestEnvironmentVariableConstants(t *testing.T) {
 	}
 	if EnvSemanticDim != "BV_SEMANTIC_DIM" {
 		t.Errorf("EnvSemanticDim = %q, want %q", EnvSemanticDim, "BV_SEMANTIC_DIM")
+	}
+	if EnvSearchMode != "BV_SEARCH_MODE" {
+		t.Errorf("EnvSearchMode = %q, want %q", EnvSearchMode, "BV_SEARCH_MODE")
+	}
+	if EnvSearchPreset != "BV_SEARCH_PRESET" {
+		t.Errorf("EnvSearchPreset = %q, want %q", EnvSearchPreset, "BV_SEARCH_PRESET")
+	}
+	if EnvSearchWeights != "BV_SEARCH_WEIGHTS" {
+		t.Errorf("EnvSearchWeights = %q, want %q", EnvSearchWeights, "BV_SEARCH_WEIGHTS")
 	}
 }
 
