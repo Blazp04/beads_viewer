@@ -627,8 +627,10 @@ func PerformUpdate(release *Release, skipConfirm bool) (*UpdateResult, error) {
 		// On some systems, rename across filesystems doesn't work
 		if err := copyFile(newBinaryPath, binaryPath); err != nil {
 			// Restore from backup
-			copyFile(backupPath, binaryPath)
-			return nil, fmt.Errorf("installation failed: %w", err)
+			if restoreErr := copyFile(backupPath, binaryPath); restoreErr != nil {
+				return nil, fmt.Errorf("installation failed: %w (restore also failed: %v; manual recovery: cp %s %s)", err, restoreErr, backupPath, binaryPath)
+			}
+			return nil, fmt.Errorf("installation failed (restored from backup): %w", err)
 		}
 	}
 
