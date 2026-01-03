@@ -966,7 +966,7 @@ export:
 | `title_contains` | String | Substring search |
 
 ### Built-in Recipes
-`bv` ships with 6 pre-configured recipes:
+`bv` ships with 11 pre-configured recipes:
 
 | Recipe | Purpose |
 |--------|---------|
@@ -976,6 +976,11 @@ export:
 | `blocked` | Waiting on dependencies |
 | `high-impact` | Top PageRank scores |
 | `stale` | Open but untouched for 30+ days |
+| `triage` | Sorted by computed triage score (impact + unblocking potential) |
+| `closed` | Recently closed issues |
+| `release-cut` | Closed in last 14 days (for changelog generation) |
+| `quick-wins` | Easy P2/P3 items with no blockers |
+| `bottlenecks` | High betweenness nodes (project bottlenecks) |
 
 ### Using Recipes
 ```bash
@@ -2940,6 +2945,9 @@ A: A cycle (e.g., A → B → A) means your project logic is broken; no task can
 
 **Q: Does this work with Jira/GitHub?**
 A: `bv` is data-agnostic. The Beads data schema supports an `external_ref` field. If you populate your `.beads/beads.jsonl` file with issues from external trackers (e.g., using a custom script or sync tool), `bv` will render them alongside your local tasks. Future versions of the `bd` CLI may support native syncing, but `bv` is ready for that data today.
+
+**Q: What's the difference between "bead" and "issue"?**
+A: They're the same thing! In the Beads ecosystem, the unit of work is called a "bead" (hence the name). However, `bv` uses "issue" in many places since that's the more familiar term for most developers. The CLI flags use both interchangeably: `--robot-file-beads`, `--pages-include-closed` (issues), etc. Think of "bead" as the Beads-specific term and "issue" as the general concept.
 
 ---
 
