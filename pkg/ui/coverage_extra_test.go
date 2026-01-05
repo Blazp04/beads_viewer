@@ -428,6 +428,45 @@ func TestOpenInEditorTerminalEditorGuard(t *testing.T) {
 	}
 }
 
+func TestOpenInEditorWithArguments(t *testing.T) {
+	// Test that EDITOR with arguments (e.g., "cursor -w") works correctly
+	// This tests the fix for GitHub issue #47
+	if runtime.GOOS == "windows" {
+		t.Skip("shell execution test unreliable on Windows CI")
+	}
+	tmp := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	defer os.Chdir(oldCwd)
+	_ = os.MkdirAll(filepath.Join(tmp, ".beads"), 0755)
+	_ = os.WriteFile(filepath.Join(tmp, ".beads", "beads.jsonl"), []byte("{}"), 0644)
+	_ = os.Chdir(tmp)
+
+	origEditor := os.Getenv("EDITOR")
+	defer os.Setenv("EDITOR", origEditor)
+
+	// Test with EDITOR containing arguments - "true" is a POSIX command that just exits 0
+	// Using "true --" simulates EDITOR with arguments like "cursor -w"
+	_ = os.Setenv("EDITOR", "true --")
+
+	m := NewModel(nil, nil, "")
+	m.openInEditor()
+	// Should succeed - the shell should parse "true --" correctly
+	if m.statusIsError {
+		t.Fatalf("expected success with EDITOR containing arguments, got error: %q", m.statusMsg)
+	}
+	if !strings.Contains(m.statusMsg, "Opened in") {
+		t.Fatalf("expected 'Opened in' message, got %q", m.statusMsg)
+	}
+
+	// Also test terminal editor detection with arguments (e.g., "vim -u NONE")
+	_ = os.Setenv("EDITOR", "vim -u NONE")
+	m2 := NewModel(nil, nil, "")
+	m2.openInEditor()
+	if !m2.statusIsError || !strings.Contains(m2.statusMsg, "terminal editor") {
+		t.Fatalf("expected terminal editor warning for 'vim -u NONE', got %q", m2.statusMsg)
+	}
+}
+
 func TestGraphPageDownAndScrollEmpty(t *testing.T) {
 	renderer := lipgloss.NewRenderer(nil)
 	g := NewGraphModel(nil, nil, DefaultTheme(renderer))

@@ -5941,11 +5941,16 @@ func (m *Model) openInEditor() {
 	}
 
 	// Check if it's a terminal editor (won't work well with TUI)
+	// Extract just the command name (first word) to handle EDITOR with args like "cursor -w"
 	terminalEditors := map[string]bool{
 		"vim": true, "vi": true, "nvim": true, "nano": true,
 		"emacs": true, "pico": true, "joe": true, "ne": true,
 	}
-	editorBase := filepath.Base(editor)
+	editorCmd := strings.Fields(editor)
+	var editorBase string
+	if len(editorCmd) > 0 {
+		editorBase = filepath.Base(editorCmd[0])
+	}
 	if terminalEditors[editorBase] {
 		m.statusMsg = fmt.Sprintf("⚠️ %s is a terminal editor - set $EDITOR to a GUI editor or quit first", editorBase)
 		m.statusIsError = true
@@ -5983,14 +5988,28 @@ func (m *Model) openInEditor() {
 	}
 
 	// Launch GUI editor in background
-	cmd := exec.Command(editor, beadsFile)
+	// Handle EDITOR with arguments (e.g., "cursor -w", "code --wait") by using shell
+	var cmd *exec.Cmd
+	if strings.Contains(editor, " ") {
+		// EDITOR contains arguments - use shell to parse them correctly
+		// This matches git's behavior with $EDITOR
+		switch runtime.GOOS {
+		case "windows":
+			cmd = exec.Command("cmd", "/c", editor+" \""+beadsFile+"\"")
+		default:
+			cmd = exec.Command("sh", "-c", editor+" \""+beadsFile+"\"")
+		}
+	} else {
+		// Simple editor command without arguments
+		cmd = exec.Command(editor, beadsFile)
+	}
 	if err := cmd.Start(); err != nil {
 		m.statusMsg = fmt.Sprintf("❌ Failed to open editor: %v", err)
 		m.statusIsError = true
 		return
 	}
 
-	m.statusMsg = fmt.Sprintf("📝 Opened in %s", filepath.Base(editor))
+	m.statusMsg = fmt.Sprintf("📝 Opened in %s", editorBase)
 	m.statusIsError = false
 }
 
