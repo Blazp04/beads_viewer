@@ -35,9 +35,16 @@
 
 ### ⚡ Quick Install
 
+**Linux/macOS:**
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh?$(date +%s)" | bash
 ```
+
+**Windows (PowerShell):**
+```powershell
+irm "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.ps1?$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" | iex
+```
+*Note: Windows requires Go 1.21+ (no pre-built binaries available yet)*
 
 ---
 
@@ -3422,12 +3429,26 @@ A: They're the same thing! In the Beads ecosystem, the unit of work is called a 
 
 ## 📦 Installation
 
-### One-Line Install
+### One-Line Install (Linux/macOS)
 The fastest way to get started. Detects your OS and architecture automatically.
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh?$(date +%s)" | bash
 ```
+
+### One-Line Install (Windows)
+For Windows users using PowerShell:
+
+```powershell
+irm "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.ps1?$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" | iex
+```
+
+**Note:** There are currently no official Windows releases, so the installer will automatically build from source. This requires:
+- Go 1.21+ installed and in your PATH
+- Git installed (for cloning the repository)
+- Internet connection for downloading dependencies
+
+To install Go on Windows, visit [https://go.dev/dl/](https://go.dev/dl/)
 
 ### Build from Source
 Requires Go 1.21+.
