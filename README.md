@@ -42,7 +42,7 @@ curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/mai
 
 **Windows (PowerShell):**
 ```powershell
-irm "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.ps1?$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" | iex
+irm "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.ps1" | iex
 ```
 *Note: Windows requires Go 1.21+ (no pre-built binaries available yet)*
 
@@ -3440,7 +3440,7 @@ curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/mai
 For Windows users using PowerShell:
 
 ```powershell
-irm "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.ps1?$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" | iex
+irm "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.ps1" | iex
 ```
 
 **Note:** There are currently no official Windows releases, so the installer will automatically build from source. This requires:
